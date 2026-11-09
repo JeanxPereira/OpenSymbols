@@ -30,6 +30,10 @@ export interface GateResult {
   skipped: number;
   /** The first skipped records with their reasons (Docs/format/01 §6). */
   skipRecords: SkipRecord[];
+  /** Kept renditions without metrics (a bad TLV, 01 §3.8); not a skip, not part of `skipped`. */
+  metricsMissing: number;
+  /** The first of those, with their reasons. */
+  metricsNotes: SkipRecord[];
 }
 
 const MASTERS: readonly Master[] = [1, 4, 9];
@@ -116,6 +120,8 @@ export function runGate(catalog: Catalog): GateResult {
     localized: 0,
     skipped: s.facets + s.renditions + s.nonVector + s.idEntries,
     skipRecords: catalog.skipRecords,
+    metricsMissing: s.metrics,
+    metricsNotes: catalog.metricsNotes,
   };
 
   for (const { name, key, bytes } of catalog.documents()) {

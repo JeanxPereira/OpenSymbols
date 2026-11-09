@@ -4,14 +4,26 @@
   "description": "Generate an icon package from your own SF Symbols catalog.",
   "type": "module",
   "license": "MIT",
-  "bin": { "opensymbols": "./dist/main.js" },
-  "files": ["dist"],
+  "bin": {
+    "opensymbols": "./dist/main.js"
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/main.ts --format esm --clean",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run"
   },
   "dependencies": {
+    "@opensymbols/core": "workspace:*",
     "@opensymbols/decode": "workspace:*"
+  },
+  "devDependencies": {
+    "@opensymbols/react": "workspace:*",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   }
 }

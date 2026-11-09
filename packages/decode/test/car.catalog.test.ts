@@ -16,7 +16,7 @@ describe.skipIf(!root)("public/Assets.car (SF_CATALOG_DIR)", () => {
 
   it("skips nothing and counts 31,029 BVG vector renditions (§5.1, §6)", () => {
     const cat = catalog();
-    expect(cat.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0 });
+    expect(cat.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0 });
     let vectors = 0;
     for (const id of new Set(cat.facets().values())) {
       for (const r of cat.renditions(id)) {

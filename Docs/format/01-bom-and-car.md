@@ -149,9 +149,26 @@ storage version 17, rendition count 157,938, followed by the version strings
 `@(#)PROGRAM:CoreUI  PROJECT:CoreUI-1010` and `Xcode 27.0 (27A200c) via
 AssetCatalogAgent-AssetRuntime`.
 
-`[OBS]` What are the byte offsets of these fields? They were read by value, not mapped.
-Nothing in symbol decoding depends on `CARHEADER`; a reader may use it only to report
-the catalog's build.
+`[INF]` The CoreUI `carheader` layout, little-endian:
+
+| offset | field | notes |
+|---:|---|---|
+| 0 | `char tag[4]` | `RATC` |
+| 4 | `u32 coreuiVersion` | 1010 on the public catalog |
+| 8 | `u32 storageVersion` | 17 |
+| 12 | `u32 storageTimestamp` | not used |
+| 16 | `u32 renditionCount` | 157,938 |
+| 20 | `char mainVersionString[128]` | NUL-terminated; `@(#)PROGRAM:CoreUI  PROJECT:CoreUI-1010` |
+| 148 | `char versionString[256]` | the Xcode string |
+
+The layout is checked on every read: `mainVersionString` must contain
+`CoreUI-<coreuiVersion>`. A block shorter than 148 bytes is malformed. Nothing in symbol
+decoding depends on `CARHEADER`; a reader uses it only to fingerprint the catalog's build. So
+a block that is absent, short or fails the check does not make the catalog unreadable: the
+reader reports no header and a note naming the reason (both values, for a failed check), and
+keeps decoding. The cost of the check is then only the fingerprint: a wrong layout is reported
+as "no header", never as a wrong build, and a build with no header is never treated as the
+validated one.
 
 ### 3.2 `KEYFORMAT`
 
@@ -298,8 +315,17 @@ little-endian.
 the header, and the payload starts at **`184 + tlvLength`**. Ignoring the TLV section
 reads its bytes as the payload tag.
 
-The TLV section is a run of `(u32 type, u32 length, length bytes)` entries. Type 1018
-carries vector-glyph metrics; see [06-drawing.md](06-drawing.md) §9.
+The TLV section is a run of `(u32 type, u32 length, length bytes)` entries, little-endian.
+`[INF]` A TLV section that does not parse cleanly (an entry whose length runs past the
+section, or a `tlvLength` past the value) loses only the metrics: the rendition and its
+payload, which starts at `184 + tlvLength` regardless, are kept, and the reader records a
+note with the reason. Reason: the format does not promise a clean run on every rendition,
+and a stricter parse would drop renditions that never needed the TLV. A rendition whose
+payload genuinely starts past the value's end is still skipped (§6). A trailing fragment of
+fewer than 8 bytes is padding. Type 1018 carries vector-glyph metrics; see
+[06-drawing.md](06-drawing.md) §9.1. A 1018 entry shorter than 36 bytes is a note with a
+reason too; the rendition is kept without metrics. Notes are counted apart from skipped
+records (§6).
 
 ### 3.9 Layouts
 
@@ -440,3 +466,5 @@ for `my` and `km`. A second, name-based localization mechanism coexists; both ar
 tree is skipped and counted, so one bad record does not hide the others. Zero records are
 skipped on either `26A5416b` catalog `[CAR]`. `[INF]` The reader keeps the first 20 skipped
 records with their tree, entry index and reason, so a non-zero count can be traced.
+`[INF]` A rendition kept without metrics (§3.8) is not a skipped record and is not part of
+that count; the reader keeps a separate count and the first 20 reasons.

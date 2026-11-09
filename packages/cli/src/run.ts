@@ -3,8 +3,9 @@ import { parseArgs } from "node:util";
 import type { Catalog } from "@opensymbols/decode";
 import { CatalogNotFoundError, openCatalogDir } from "./catalog-dir.js";
 import { dumpAllTo, dumpRendition } from "./dump.js";
-import { describeError } from "./errors.js";
+import { describeError, UsageError } from "./errors.js";
 import { groupFailures, runGate } from "./gate.js";
+import { generate } from "./generate/index.js";
 
 const USAGE = `Usage: opensymbols <command> [options]
 
@@ -12,6 +13,8 @@ Commands:
   dump NAME [--master 1|4|9]      print the canonical dump of one symbol
   dump --all --out FILE           write the dump of every rendition to FILE
   gate                            decode every rendition and check master compatibility
+  generate --out DIR [--name PKG] [--masters all|regular]
+                                  write an installable icon package to DIR
 
 Options:
   --catalog DIR                   catalog root (else $SF_CATALOG_DIR)`;
@@ -22,7 +25,6 @@ export interface Io {
 }
 export type Env = Record<string, string | undefined>;
 
-class UsageError extends Error {}
 
 function openCatalog(dir: string | undefined, env: Env): Catalog {
   const root = dir ?? env.SF_CATALOG_DIR;
@@ -32,13 +34,18 @@ function openCatalog(dir: string | undefined, env: Env): Catalog {
   return openCatalogDir(root);
 }
 
+/** gate and dump still work without a readable CARHEADER (Docs/format/01 §3.1); they say so. */
+function noteHeader(catalog: Catalog, io: Io): void {
+  if (catalog.headerNote !== undefined) io.err(`note: CARHEADER not read: ${catalog.headerNote}\n`);
+}
+
 function main(argv: string[], env: Env, io: Io): number {
   const [command, ...rest] = argv;
   if (command === undefined || command === "--help" || command === "-h") {
     io.out(USAGE + "\n");
     return command === undefined ? 2 : 0;
   }
-  if (command !== "dump" && command !== "gate") throw new UsageError(`unknown command "${command}"`);
+  if (command !== "dump" && command !== "gate" && command !== "generate") throw new UsageError(`unknown command "${command}"`);
 
   let parsed;
   try {
@@ -50,6 +57,8 @@ function main(argv: string[], env: Env, io: Io): number {
         all: { type: "boolean" },
         out: { type: "string" },
         master: { type: "string" },
+        name: { type: "string" },
+        masters: { type: "string" },
       },
     });
   } catch (e) {
@@ -58,8 +67,25 @@ function main(argv: string[], env: Env, io: Io): number {
   }
   const { values, positionals } = parsed;
 
+  if (command === "generate") {
+    // An object, not a string list: check-pack rejects the quoted word "masters" in a tarball.
+    const allowed = { catalog: true, out: true, name: true, masters: true };
+    for (const flag of Object.keys(values)) {
+      if (!Object.hasOwn(allowed, flag)) throw new UsageError(`--${flag} does not apply to generate`);
+    }
+    if (positionals.length > 0) throw new UsageError(`generate takes no positional arguments: ${positionals.join(" ")}`);
+    if (values.out === undefined || values.out === "") throw new UsageError("generate needs --out DIR");
+    const masters = values.masters ?? "all";
+    if (masters !== "all" && masters !== "regular") throw new UsageError("--masters must be all or regular");
+    const packageName = values.name ?? "opensymbols-local";
+    if (packageName === "") throw new UsageError("--name must not be empty");
+    const catalog = openCatalog(values.catalog, env);
+    return generate(catalog, { out: values.out, packageName, masters }, io);
+  }
+
   if (command === "gate") {
     const catalog = openCatalog(values.catalog, env);
+    noteHeader(catalog, io);
     const r = runGate(catalog);
     for (const g of groupFailures(r.failures)) {
       const more = g.distinctNames > g.names.length ? `, +${g.distinctNames - g.names.length} more` : "";
@@ -72,6 +98,10 @@ function main(argv: string[], env: Env, io: Io): number {
         io.err(`SKIPPED (first ${r.skipRecords.length} of ${r.skipped} listed)\n`);
       }
     }
+    if (r.metricsMissing > 0) {
+      for (const n of r.metricsNotes) io.err(`note: no metrics ${n.tree}[${n.index}]: ${n.reason}\n`);
+      io.err(`note: metricsMissing=${r.metricsMissing} (renditions kept without glyph metrics)\n`);
+    }
     io.err(`note: localized=${r.localized} (localized facets are not master-checked)\n`);
     io.out(
       `documents=${r.documents} failures=${r.failures.length} incompatible=${r.incompatibleMasters.length} skipped=${r.skipped}
@@ -83,6 +113,7 @@ function main(argv: string[], env: Env, io: Io): number {
   if (values.all === true) {
     if (values.out === undefined) throw new UsageError("dump --all needs --out FILE");
     const catalog = openCatalog(values.catalog, env);
+    noteHeader(catalog, io);
     writeDumpAll(catalog, values.out);
     return 0;
   }
@@ -92,6 +123,7 @@ function main(argv: string[], env: Env, io: Io): number {
   const master = values.master === undefined ? 4 : Number(values.master);
   if (master !== 1 && master !== 4 && master !== 9) throw new UsageError("--master must be 1, 4 or 9");
   const catalog = openCatalog(values.catalog, env);
+  noteHeader(catalog, io);
   const entry = catalog.resolve(name);
   if (entry === undefined) throw new UsageError(`no symbol named "${name}"`);
   // GlyphWeight is rendition key token 26.

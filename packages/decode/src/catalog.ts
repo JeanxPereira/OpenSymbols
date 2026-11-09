@@ -3,14 +3,16 @@ import { parseStyleBlock } from "./bvg/style.js";
 import {
   AssetCatalog,
   Token,
+  type CatalogHeader,
+  type GlyphMetrics,
   type Rendition,
   type RenditionKey,
   type SkipCounts,
   type SkipRecord,
 } from "./car.js";
 import { DecodeError } from "./errors.js";
-import { buildDrawing, type Drawing } from "./drawing.js";
-import { loadBundleMetadata, type BundleMetadata } from "./metadata.js";
+import { buildDrawing, type Drawing, type RenderingMode } from "./drawing.js";
+import { loadAppMetadata, loadBundleMetadata, type AppMetadata, type BundleMetadata } from "./metadata.js";
 
 const WHERE = "Catalog";
 
@@ -33,6 +35,17 @@ export interface SymbolEntry {
   variants: { appearance: number[]; direction: number[] };
 }
 
+/** `AppMetadata` (Docs/format/05 §3) as `Catalog` exposes it: read-only. */
+export interface AppMetadataView {
+  readonly categoryLabels: ReadonlyMap<string, string>;
+  readonly baseSymbols: ReadonlyMap<string, readonly string[]>;
+  readonly layersetAvailability: ReadonlyMap<string, readonly RenderingMode[]>;
+  readonly palette?: {
+    readonly light: ReadonlyMap<string, string>;
+    readonly dark: ReadonlyMap<string, string>;
+  };
+}
+
 export interface PickOptions {
   appearance?: number;
   direction?: number;
@@ -41,12 +54,15 @@ export interface PickOptions {
 export class Catalog {
   readonly #car: AssetCatalog;
   readonly #meta: BundleMetadata;
+  readonly #appFiles: Map<string, Uint8Array> | undefined;
+  #app: AppMetadata | undefined;
   readonly #entries: SymbolEntry[];
   readonly #byName = new Map<string, SymbolEntry>();
 
-  private constructor(car: AssetCatalog, meta: BundleMetadata) {
+  private constructor(car: AssetCatalog, meta: BundleMetadata, appFiles: Map<string, Uint8Array> | undefined) {
     this.#car = car;
     this.#meta = meta;
+    this.#appFiles = appFiles;
 
     const facets = car.facets();
     // Docs/format/05 §4.3: suffixes that mark a localized or right-to-left facet.
@@ -96,15 +112,31 @@ export class Catalog {
   }
 
   /**
-   * `appFiles` is accepted for the SF Symbols app's files (Docs/format/05 §3) but nothing in
-   * `SymbolEntry` draws on them yet, so they are not read.
+   * `appFiles` are the SF Symbols app's files (Docs/format/05 §3). They are kept unparsed
+   * here, so a malformed app file cannot break readers that never ask for it (`dump`, `gate`);
+   * `appMetadata` parses them on first access.
    */
   static open(input: {
     car: Uint8Array;
     bundleFiles: Map<string, Uint8Array>;
     appFiles?: Map<string, Uint8Array>;
   }): Catalog {
-    return new Catalog(AssetCatalog.open(input.car), loadBundleMetadata(input.bundleFiles));
+    return new Catalog(AssetCatalog.open(input.car), loadBundleMetadata(input.bundleFiles), input.appFiles);
+  }
+
+  /**
+   * The app's metadata (Docs/format/05 §3) when `appFiles` were given, else undefined. Parsed
+   * on first access and memoised; a malformed app file throws its DecodeError here, each time.
+   */
+  get appMetadata(): AppMetadataView | undefined {
+    if (this.#appFiles === undefined) return undefined;
+    this.#app ??= loadAppMetadata(this.#appFiles);
+    return this.#app;
+  }
+
+  /** APPEARANCEKEYS name → Appearance id (Docs/format/01 §3.6); a copy. */
+  appearances(): Map<string, number> {
+    return this.#car.appearances();
   }
 
   /** Rendition key tokens in KEYFORMAT order (Docs/format/01 §3.3). */
@@ -122,6 +154,25 @@ export class Catalog {
     return this.#car.skipRecords;
   }
 
+  /**
+   * CoreUI version and rendition count from CARHEADER (Docs/format/01 §3.1); undefined when the
+   * block is absent, short or fails its check, with the reason in `headerNote`.
+   */
+  get header(): CatalogHeader | undefined {
+    const h = this.#car.header;
+    return h === undefined ? undefined : { ...h };
+  }
+
+  /** Why `header` is undefined; undefined when it read. */
+  get headerNote(): string | undefined {
+    return this.#car.headerNote;
+  }
+
+  /** Renditions kept without metrics because their TLV was unusable (Docs/format/01 §3.8); a copy. */
+  get metricsNotes(): SkipRecord[] {
+    return this.#car.metricsNotes;
+  }
+
   symbols(): SymbolEntry[] {
     return [...this.#entries];
   }
@@ -134,8 +185,27 @@ export class Catalog {
     return modern === undefined ? undefined : this.#byName.get(modern);
   }
 
+  /**
+   * Whether `document` would find a rendition: the same pick (Docs/format/05 §4.4), without
+   * throwing when there is none. False for an unknown name; two renditions with the same full
+   * tuple still throw, as they do for `document`.
+   */
+  hasRendition(name: string, master: Master, opts: PickOptions = {}): boolean {
+    const entry = this.resolve(name);
+    return entry !== undefined && this.#find(entry, master, opts) !== undefined;
+  }
+
   document(name: string, master: Master, opts: PickOptions = {}): BvgDocument {
-    return parseBvg(this.#pick(name, master, opts));
+    return parseBvg(this.#pick(name, master, opts).payload as Uint8Array);
+  }
+
+  /** Glyph metrics (Docs/format/06 §9.1) of the rendition `document` would pick. */
+  metrics(name: string, master: Master, opts: PickOptions = {}): GlyphMetrics {
+    const picked = this.#pick(name, master, opts);
+    if (picked.metrics === undefined) {
+      throw new DecodeError(WHERE, `symbol "${name}" weight ${master}: rendition has no glyph metrics (TLV 1018)`);
+    }
+    return { ...picked.metrics };
   }
 
   drawing(name: string, master: Master, opts: PickOptions = {}): Drawing {
@@ -164,9 +234,24 @@ export class Catalog {
    * Docs/format/05 §4.4: filter on (Identifier, GlyphWeight, Localization 0) and any fixed axis,
    * take the lowest pair. Two renditions with the same full tuple are an error, not a choice.
    */
-  #pick(name: string, master: Master, opts: PickOptions): Uint8Array {
+  #pick(name: string, master: Master, opts: PickOptions): Rendition {
     const entry = this.resolve(name);
     if (entry === undefined) throw new DecodeError(WHERE, `no symbol named "${name}"`);
+    const best = this.#find(entry, master, opts);
+    if (best === undefined) {
+      const fixed =
+        (opts.direction === undefined ? "" : `, direction ${opts.direction}`) +
+        (opts.appearance === undefined ? "" : `, appearance ${opts.appearance}`);
+      throw new DecodeError(
+        WHERE,
+        `symbol "${entry.name}" (identifier ${entry.identifier}) has no vector rendition for weight ${master}, localization 0${fixed}`,
+      );
+    }
+    return best;
+  }
+
+  /** The pick of `#pick`, or undefined when nothing matches; a tie throws. */
+  #find(entry: SymbolEntry, master: Master, opts: PickOptions): Rendition | undefined {
     let best: Rendition | undefined;
     let tie = false;
     for (const r of this.#car.renditions(entry.identifier)) {
@@ -191,16 +276,7 @@ export class Catalog {
         `symbol "${entry.name}": two vector renditions share identifier ${entry.identifier}, weight ${master}, localization 0, direction ${d}, appearance ${a} (05 §4.4)`,
       );
     }
-    if (best === undefined) {
-      const fixed =
-        (opts.direction === undefined ? "" : `, direction ${opts.direction}`) +
-        (opts.appearance === undefined ? "" : `, appearance ${opts.appearance}`);
-      throw new DecodeError(
-        WHERE,
-        `symbol "${entry.name}" (identifier ${entry.identifier}) has no vector rendition for weight ${master}, localization 0${fixed}`,
-      );
-    }
-    return best.payload as Uint8Array;
+    return best;
   }
 }
 

@@ -1,0 +1,17 @@
+{
+  "name": "@opensymbols/core",
+  "version": "0.0.0",
+  "description": "Framework-free runtime for generated OpenSymbols data: format types and weight interpolation.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": false,
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run"
+  }
+}

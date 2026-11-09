@@ -21,6 +21,28 @@ const CSI_HEADER_LENGTH = 184;
 /** Docs/format/01 §3.10: DWAR tag, u32 zero, u32 payloadLength. */
 const DWAR_HEADER_LENGTH = 12;
 
+/** Glyph metrics from csiheader TLV type 1018 (Docs/format/06 §9.1), in viewBox units. */
+export interface GlyphMetrics {
+  referencePointSize: number;
+  baselineOffset: number;
+  capHeight: number;
+  leftInset: number;
+  rightInset: number;
+}
+
+/** The two CARHEADER fields a reader may report (Docs/format/01 §3.1). */
+export interface CatalogHeader {
+  coreuiVersion: number;
+  renditionCount: number;
+}
+
+/** Docs/format/01 §3.8: TLV type that carries the glyph metrics. */
+const TLV_GLYPH_METRICS = 1018;
+/** Docs/format/06 §9.1: a 1018 entry is at least nine 4-byte words. */
+const METRICS_LENGTH = 36;
+/** Docs/format/01 §3.1: mainVersionString ends at 20 + 128. */
+const CARHEADER_MIN = 148;
+
 export interface RenditionKey {
   [token: number]: number;
 }
@@ -31,6 +53,8 @@ export interface Rendition {
   name: string;
   /** The bytes inside `DWAR`, or null when the rendition carries no vector drawing. */
   payload: Uint8Array | null;
+  /** From TLV 1018 (Docs/format/06 §9.1); absent when the entry is absent or too short. */
+  metrics?: GlyphMetrics;
 }
 
 /** One record the reader skipped (Docs/format/01 §6): the tree, its entry index, and why. */
@@ -45,6 +69,11 @@ export interface SkipCounts {
   renditions: number;
   nonVector: number;
   idEntries: number;
+  /**
+   * Kept renditions whose TLV section or 1018 entry was unusable (Docs/format/01 §3.8): not a
+   * dropped record, so not part of any skip total; the reasons are in `metricsNotes`.
+   */
+  metrics: number;
 }
 
 /** How many skip records are kept with their reasons; the counters count them all. */
@@ -58,21 +87,28 @@ export class AssetCatalog {
    * `nonVector` counts renditions kept with a null payload although `renditionLength > 0`
    * (payload tag is not DWAR, §3.10); a layout-1003 slot is not counted.
    */
-  readonly skipped: SkipCounts = { facets: 0, renditions: 0, nonVector: 0, idEntries: 0 };
+  readonly skipped: SkipCounts = { facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0 };
 
   readonly #skipRecords: SkipRecord[] = [];
+  readonly #metricsNotes: SkipRecord[] = [];
 
   readonly #facets = new Map<string, number>();
   readonly #renditions = new Map<number, Rendition[]>();
   readonly #localizations = new Map<string, number>();
   readonly #appearances = new Map<string, number>();
 
-  private constructor(readonly keyFormat: number[]) {}
+  private constructor(
+    readonly keyFormat: number[],
+    /** Undefined when CARHEADER is absent, short or fails its check; `headerNote` says why. */
+    readonly header: CatalogHeader | undefined,
+    readonly headerNote: string | undefined,
+  ) {}
 
   static open(bytes: Uint8Array): AssetCatalog {
     const store = BomStore.open(bytes);
     const keyFormat = readKeyFormat(store);
-    const catalog = new AssetCatalog(keyFormat);
+    const h = readHeader(store);
+    const catalog = new AssetCatalog(keyFormat, h.header, h.note);
     const idSlot = keyFormat.indexOf(Token.Identifier);
 
     catalog.#readFacets(store);
@@ -88,6 +124,11 @@ export class AssetCatalog {
   /** The first SKIP_RECORD_LIMIT skipped records, in reading order; a copy. */
   get skipRecords(): SkipRecord[] {
     return this.#skipRecords.map((r) => ({ ...r }));
+  }
+
+  /** The first SKIP_RECORD_LIMIT metrics notes (renditions kept without metrics); a copy. */
+  get metricsNotes(): SkipRecord[] {
+    return this.#metricsNotes.map((r) => ({ ...r }));
   }
 
   #skip(counter: keyof SkipCounts, tree: string, index: number, reason: string): void {
@@ -188,6 +229,13 @@ export class AssetCatalog {
         this.#skip("renditions", tree, index, csi);
         continue;
       }
+      if (csi.metricsReason !== undefined) {
+        // Not a dropped record: the rendition is kept, only its metrics are absent.
+        this.skipped.metrics++;
+        if (this.#metricsNotes.length < SKIP_RECORD_LIMIT) {
+          this.#metricsNotes.push({ tree, index, reason: `"${csi.name}": ${csi.metricsReason}` });
+        }
+      }
       const id = parsed[keyFormat[idSlot] as number] as number;
       let list = this.#renditions.get(id);
       if (list === undefined) {
@@ -197,7 +245,9 @@ export class AssetCatalog {
       if (csi.nonVector) {
         this.#skip("nonVector", tree, index, `"${csi.name}": payload tag is not DWAR (§3.10)`);
       }
-      list.push({ key: parsed, layout: csi.layout, name: csi.name, payload: csi.payload });
+      const rendition: Rendition = { key: parsed, layout: csi.layout, name: csi.name, payload: csi.payload };
+      if (csi.metrics !== undefined) rendition.metrics = csi.metrics;
+      list.push(rendition);
     }
   }
 
@@ -217,6 +267,35 @@ export class AssetCatalog {
       into.set(name, new ByteReader(value).u16le());
     }
   }
+}
+
+/**
+ * Docs/format/01 §3.1, the CoreUI carheader, little-endian: u32 tag @0, u32 coreuiVersion @4,
+ * u32 storageVersion @8, u32 storageTimestamp @12, u32 renditionCount @16, char
+ * mainVersionString[128] @20. The version string must name `CoreUI-<coreuiVersion>`, which
+ * checks the layout on every read. Symbol decoding does not depend on the header, so a block
+ * that is absent, short or fails the check yields no header and a note, not an error.
+ */
+function readHeader(store: BomStore): { header?: CatalogHeader; note?: string } {
+  const block = store.named("CARHEADER");
+  if (block === undefined) return { note: "no CARHEADER block" };
+  if (block.length < CARHEADER_MIN) {
+    return { note: `CARHEADER of ${block.length} bytes, shorter than ${CARHEADER_MIN}` };
+  }
+  const r = new ByteReader(block, 4);
+  const coreuiVersion = r.u32le();
+  r.seek(16);
+  const renditionCount = r.u32le();
+  const bytes = block.subarray(20, 148);
+  let end = bytes.indexOf(0);
+  if (end < 0) end = bytes.length;
+  const version = latin1(bytes.subarray(0, end));
+  if (!version.includes(`CoreUI-${coreuiVersion}`)) {
+    return {
+      note: `CARHEADER coreuiVersion ${coreuiVersion} but mainVersionString ${JSON.stringify(version)} does not contain "CoreUI-${coreuiVersion}"`,
+    };
+  }
+  return { header: { coreuiVersion, renditionCount } };
 }
 
 /** Docs/format/01 §3.2: u32 tag, u32 version, u32 count, u32 token[count], little-endian. */
@@ -250,7 +329,7 @@ function readKeyFormat(store: BomStore): number[] {
  */
 function readCsi(
   value: Uint8Array,
-): (Omit<Rendition, "key"> & { nonVector: boolean }) | string {
+): (Omit<Rendition, "key"> & { nonVector: boolean; metricsReason?: string }) | string {
   if (value.length < CSI_HEADER_LENGTH) {
     return `csiheader value of ${value.length} bytes, shorter than ${CSI_HEADER_LENGTH}`;
   }
@@ -270,15 +349,54 @@ function readCsi(
   r.seek(180);
   const renditionLength = r.u32le();
 
+  // §3.8 [INF]: the TLV section is (u32 type, u32 length, bytes) entries. A section that does
+  // not parse cleanly loses only the metrics; the payload still starts at 184 + tlvLength.
+  let metrics: GlyphMetrics | undefined;
+  let metricsReason: string | undefined;
+  const tlvEnd = Math.min(CSI_HEADER_LENGTH + tlvLength, value.length);
+  if (CSI_HEADER_LENGTH + tlvLength > value.length) {
+    metricsReason = `tlvLength ${tlvLength} runs past the value's end`;
+  }
+  const tr = new ByteReader(value.subarray(0, tlvEnd), CSI_HEADER_LENGTH);
+  // A trailing fragment under 8 bytes cannot hold an entry head; it is padding.
+  while (tr.remaining() >= 8) {
+    const type = tr.u32le();
+    const len = tr.u32le();
+    if (len > tr.remaining()) {
+      // Drop metrics found earlier too: a section that does not parse is not trusted.
+      metrics = undefined;
+      metricsReason = `TLV entry ${type} of ${len} bytes, ${tr.remaining()} remain in the section`;
+      break;
+    }
+    const body = tr.bytes(len);
+    if (type !== TLV_GLYPH_METRICS || metrics !== undefined) continue; // first 1018 wins
+    if (len < METRICS_LENGTH) {
+      metricsReason = `TLV 1018 of ${len} bytes, shorter than ${METRICS_LENGTH} (06 §9.1)`;
+      continue;
+    }
+    // 06 §9.1: u32 7, u32 referencePointSize, f32 baselineOffset, capHeight, [6 or 7], leftInset, [0.888672], rightInset.
+    const dv = new DataView(body.buffer, body.byteOffset, body.byteLength);
+    metrics = {
+      referencePointSize: dv.getUint32(4, true),
+      baselineOffset: dv.getFloat32(8, true),
+      capHeight: dv.getFloat32(12, true),
+      leftInset: dv.getFloat32(20, true),
+      rightInset: dv.getFloat32(28, true),
+    };
+  }
+  const extra: { metrics?: GlyphMetrics; metricsReason?: string } = {};
+  if (metrics !== undefined) extra.metrics = metrics;
+  if (metricsReason !== undefined) extra.metricsReason = metricsReason;
+
   // Docs/format/01 §3.9: renditionLength 0 means no payload, whatever the layout.
-  if (renditionLength === 0) return { layout, name, payload: null, nonVector: false };
+  if (renditionLength === 0) return { layout, name, payload: null, nonVector: false, ...extra };
 
   // §3.8: the payload starts at 184 + tlvLength, not at 184.
   const start = CSI_HEADER_LENGTH + tlvLength;
   if (start + 4 > value.length) return `"${name}": payload starts past the value's end`;
   if (latin1(value.subarray(start, start + 4)) !== "DWAR") {
     // §3.10: a payload tag other than DWAR is not a vector drawing.
-    return { layout, name, payload: null, nonVector: true };
+    return { layout, name, payload: null, nonVector: true, ...extra };
   }
   if (start + DWAR_HEADER_LENGTH > value.length) return `"${name}": DWAR header truncated`;
   const dr = new ByteReader(value, start + 8);
@@ -291,6 +409,7 @@ function readCsi(
     name,
     payload: value.subarray(start + DWAR_HEADER_LENGTH, start + DWAR_HEADER_LENGTH + length),
     nonVector: false,
+    ...extra,
   };
 }
 

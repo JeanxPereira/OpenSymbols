@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Catalog } from "../src/catalog.js";
 import { DecodeError } from "../src/errors.js";
 import { buildBvg } from "./helpers/build-bvg.js";
-import { buildCar, type RenditionSpec } from "./helpers/build-car.js";
+import { buildCar, f32s, le, tlvSection, type RenditionSpec } from "./helpers/build-car.js";
 import { buildBplist } from "./helpers/build-plist.js";
 import { buildStyle } from "./helpers/build-style.js";
 
@@ -69,10 +69,10 @@ describe("Catalog (Docs/format/01 section 5.3, 05 section 4)", () => {
       }),
       bundleFiles,
     });
-    expect(c.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 1, idEntries: 0 });
+    expect(c.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 1, idEntries: 0, metrics: 0 });
     c.skipped.nonVector = 99;
     expect(c.skipped.nonVector).toBe(1);
-    expect(catalog().skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0 });
+    expect(catalog().skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0 });
   });
 
   it("exposes a copy of the skip records with their reasons", () => {
@@ -159,6 +159,30 @@ describe("Catalog (Docs/format/01 section 5.3, 05 section 4)", () => {
     );
   });
 
+  it("hasRendition answers the pick without throwing when nothing matches", () => {
+    const c = catalog();
+    expect(c.hasRendition("wifi", 4)).toBe(true);
+    expect(c.hasRendition("wifi", 4, { appearance: 1 })).toBe(true);
+    expect(c.hasRendition("wifi", 4, { appearance: 2 })).toBe(false);
+    expect(c.hasRendition("wifi.old", 9)).toBe(true);
+    expect(c.hasRendition("airplane", 4, { direction: 5 })).toBe(true);
+    expect(c.hasRendition("airplane", 4, { direction: 4 })).toBe(false);
+    expect(c.hasRendition("0.circle", 1)).toBe(false);
+    expect(c.hasRendition("missing", 4)).toBe(false);
+  });
+
+  it("hasRendition still throws on a tie, as document does", () => {
+    const c = Catalog.open({
+      car: buildCar({
+        keyFormat: KEY_FORMAT,
+        facets: { tie: 1 },
+        renditions: [rend(1, 4, "first", { 7: 1 }), rend(1, 4, "second", { 7: 1 })],
+      }),
+      bundleFiles,
+    });
+    expect(() => c.hasRendition("tie", 4)).toThrow(DecodeError);
+  });
+
   it("follows aliases in resolve and lists them on the modern entry", () => {
     const c = catalog();
     expect(c.resolve("wifi.old")?.name).toBe("wifi");
@@ -233,5 +257,85 @@ describe("Catalog (Docs/format/01 section 5.3, 05 section 4)", () => {
     });
     expect(c.drawing("a", 4).viewBox).toEqual([0, 0, 3, 5]);
     expect(c.drawing("a", 4).layers).toEqual([]);
+  });
+
+  it("returns the glyph metrics of the picked rendition and the catalog header", () => {
+    const m = tlvSection([1018, new Uint8Array([...le(4, 7, 17), ...f32s(-1.5, 9.25, 6, 0.5, 0.888672, 0.75, 0.888672)])]);
+    const c = Catalog.open({
+      car: buildCar({
+        keyFormat: KEY_FORMAT,
+        facets: { a: 1, b: 2 },
+        header: { coreuiVersion: 1010, renditionCount: 2 },
+        renditions: [
+          { key: { 17: 1, 26: 4 }, payload: doc("a"), tlv: m },
+          { key: { 17: 2, 26: 4 }, payload: doc("b") },
+        ],
+      }),
+      bundleFiles,
+    });
+    expect(c.metrics("a", 4)).toEqual({
+      referencePointSize: 17,
+      baselineOffset: -1.5,
+      capHeight: 9.25,
+      leftInset: 0.5,
+      rightInset: 0.75,
+    });
+    expect(() => c.metrics("b", 4)).toThrow(DecodeError);
+    expect(c.header).toEqual({ coreuiVersion: 1010, renditionCount: 2 });
+  });
+
+  it("opens a catalog whose CARHEADER does not check out: no header, a note, its symbols still read", () => {
+    const c = Catalog.open({
+      car: buildCar({
+        keyFormat: KEY_FORMAT,
+        facets: { a: 1 },
+        header: { coreuiVersion: 1010, mainVersionString: "PROJECT:CoreUI-999" },
+        renditions: [{ key: { 17: 1, 26: 4 }, payload: doc("a") }],
+      }),
+      bundleFiles,
+    });
+    expect(c.header).toBeUndefined();
+    expect(c.headerNote).toContain("CoreUI-999");
+    expect(c.symbols().map((e) => e.name)).toEqual(["a"]);
+    expect(c.document("a", 4)).toBeDefined();
+  });
+
+  it("exposes a copy of the APPEARANCEKEYS name → id map", () => {
+    const c = catalog();
+    expect(c.appearances()).toEqual(new Map([["dark", 1]]));
+    c.appearances().set("x", 9);
+    expect(c.appearances().has("x")).toBe(false);
+  });
+
+  it("parses appFiles into read-only app metadata, undefined without them", () => {
+    expect(catalog().appMetadata).toBeUndefined();
+    const c = Catalog.open({
+      car,
+      bundleFiles,
+      appFiles: files({
+        "layerset_availability.plist": buildBplist({
+          symbols: { wifi: { multicolor: "2019" } },
+          year_to_release: {},
+        }),
+        "colors-26.csv": new TextEncoder().encode(
+          'macOS Color Name,Light Standard,Dark Standard\nsystemBlueColor,"0, 136, 255","0, 145, 255"\n',
+        ),
+      }),
+    });
+    expect(c.appMetadata?.layersetAvailability.get("wifi")).toEqual(["monochrome", "multicolor", "palette"]);
+    expect(c.appMetadata?.palette?.light.get("systemBlueColor")).toBe("#0088ff");
+    expect(c.appMetadata?.palette?.dark.get("systemBlueColor")).toBe("#0091ff");
+  });
+
+  it("a malformed app file does not fail Catalog.open; it throws on appMetadata access", () => {
+    const c = Catalog.open({ car, bundleFiles, appFiles: files({ "base_symbols_map.json": new TextEncoder().encode("{") }) });
+    expect(c.symbols().length).toBeGreaterThan(0);
+    expect(() => c.appMetadata).toThrow(DecodeError);
+    expect(() => c.appMetadata).toThrow(DecodeError);
+  });
+
+  it("parses the app files once and returns the same object afterwards", () => {
+    const c = Catalog.open({ car, bundleFiles, appFiles: files({}) });
+    expect(c.appMetadata).toBe(c.appMetadata);
   });
 });

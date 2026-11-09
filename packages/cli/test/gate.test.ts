@@ -84,6 +84,21 @@ describe("runGate", () => {
     expect(r.incompatibleMasters.map((m) => m.name)).toEqual(["a"]);
   });
 
+  it("reports a bad TLV as missing metrics, not as a skipped record", () => {
+    const car = buildCar({
+      keyFormat: [4, 7, 13, 17, 26],
+      facets: { a: 1 },
+      localizations: {},
+      appearances: {},
+      renditions: [{ key: { 17: 1, 26: 4 }, payload: buildBvg({ typeCode: 0x11, root: { tag: 0 } }), tlv: new Uint8Array(20).fill(0x44) }],
+    });
+    const r = runGate(Catalog.open({ car, bundleFiles }));
+    expect(r.skipped).toBe(0);
+    expect(r.skipRecords).toEqual([]);
+    expect(r.metricsMissing).toBe(1);
+    expect(r.metricsNotes[0]!.reason).toMatch(/TLV entry/);
+  });
+
   it("counts skipped container records and reports them with their reasons", () => {
     const car = buildCar({
       keyFormat: [4, 7, 13, 17, 26],

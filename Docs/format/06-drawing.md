@@ -468,10 +468,10 @@ subpaths are the natural reading; not established.
 A number "parses" only if the whole token is a number; a numeric prefix followed by other
 characters is not a number.
 
-## 9. Not yet specified
+## 9. Glyph metrics and what is not yet specified
 
-Glyph metrics, the rotation anchor and the metric centre are outside this decoder's scope.
-What is known about where they live, for the work that will need them:
+The rotation anchor and the metric centre are outside this decoder's scope. What is known
+about where they live, for the work that will need them. Glyph metrics are specified:
 
 ### 9.1 Glyph metrics
 
@@ -479,9 +479,21 @@ What is known about where they live, for the work that will need them:
 ([01](01-bom-and-car.md) §3.8), at least 36 bytes, little-endian words in viewBox units:
 
 ```
-u32 7 | u32 referencePointSize | f32 baselineOffset | f32 capHeight | f32 (6 or 7)
-      | f32 leftInset | f32 (0.888672) | f32 rightInset | f32 (0.888672) | …
+offset  0  u32 7 [OBS]
+        4  u32 referencePointSize
+        8  f32 baselineOffset
+       12  f32 capHeight
+       16  f32 (6 or 7) [OBS]
+       20  f32 leftInset
+       24  f32 (0.888672) [OBS]
+       28  f32 rightInset
+       32  f32 (0.888672) [OBS]
+       36+ [OBS]
 ```
+
+`[INF]` A reader takes the five named fields at those offsets. An entry shorter than 36 bytes
+yields no metrics (a note with a reason; the rendition is kept). A rendition without a 1018
+entry has no metrics. When a section holds two 1018 entries the first wins.
 
 `[INF]` The field identities, each from a relation that holds on every rendition checked
 (`wifi`, `apple.intelligence`, `gear`, `heart.fill`, `arrow.clockwise`,

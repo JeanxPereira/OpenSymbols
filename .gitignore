@@ -11,3 +11,4 @@ generated/
 *.strings
 colors-*.csv
 base_symbols_map.json
+packages/cli/.generated-test/

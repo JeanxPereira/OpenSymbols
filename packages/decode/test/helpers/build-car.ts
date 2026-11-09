@@ -43,8 +43,38 @@ export interface CarSpec {
   rawFacets?: [string, Uint8Array][];
   /** Raw LOCALIZATIONKEYS (name, value) entries appended after `localizations`. */
   rawLocalizations?: [string, Uint8Array][];
+  /** CARHEADER fields (CoreUI carheader layout, Docs/format/01 §3.1); defaults 1010, 17, rendition count. */
+  header?: { coreuiVersion?: number; renditionCount?: number; mainVersionString?: string };
   /** Omit these variables from the BOM. */
   omit?: string[];
+}
+
+/** A TLV section: (u32 type, u32 length, bytes) entries (Docs/format/01 §3.8). */
+export function tlvSection(...entries: [number, Uint8Array][]): Uint8Array {
+  return concat(entries.map(([type, bytes]) => concat([le(4, type, bytes.length), bytes])));
+}
+
+/** Little-endian f32 words. */
+export function f32s(...values: number[]): Uint8Array {
+  const out = new Uint8Array(values.length * 4);
+  const view = new DataView(out.buffer);
+  values.forEach((v, i) => view.setFloat32(i * 4, v, true));
+  return out;
+}
+
+/** The 436-byte CARHEADER written field by field (Docs/format/01 §3.1). */
+export function carheader(h: CarSpec["header"] = {}, defaultCount = 0): Uint8Array {
+  const coreui = h.coreuiVersion ?? 1010;
+  const out = new Uint8Array(436);
+  const view = new DataView(out.buffer);
+  out.set(ascii("RATC"), 0);
+  view.setUint32(4, coreui, true);
+  view.setUint32(8, 17, true);
+  view.setUint32(12, 0x5a5a5a5a, true); // storageTimestamp
+  view.setUint32(16, h.renditionCount ?? defaultCount, true);
+  out.set(ascii(h.mainVersionString ?? `@(#)PROGRAM:CoreUI  PROJECT:CoreUI-${coreui}`), 20);
+  out.set(ascii("Xcode 27.0 (27A200c) via AssetCatalogAgent-AssetRuntime"), 148);
+  return out;
 }
 
 export const DEFAULT_KEY_FORMAT = [7, 17, 26];
@@ -84,7 +114,7 @@ export function buildCar(spec: CarSpec = {}): Uint8Array {
     if (!spec.omit?.includes(name)) vars[name] = header;
   };
 
-  add("CARHEADER", concat([ascii("RATC"), le(4, 1010, 17, 0)]));
+  add("CARHEADER", carheader(spec.header, spec.renditions?.length ?? 0));
   add("KEYFORMAT", concat([ascii("TMFK"), le(4, 0, keyFormat.length, ...keyFormat)]));
 
   const facetEntries = Object.entries(spec.facets ?? {}).map(

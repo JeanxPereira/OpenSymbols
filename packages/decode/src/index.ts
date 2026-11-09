@@ -5,6 +5,8 @@ export {
   AssetCatalog,
   SKIP_RECORD_LIMIT,
   Token,
+  type CatalogHeader,
+  type GlyphMetrics,
   type Rendition,
   type RenditionKey,
   type SkipCounts,
@@ -56,6 +58,7 @@ export {
 } from "./metadata.js";
 export {
   Catalog,
+  type AppMetadataView,
   type Master,
   type PickOptions,
   type SymbolEntry,

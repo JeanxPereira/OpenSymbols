@@ -24,6 +24,16 @@ describe.skipIf(!root)("Catalog on the real catalog (SF_CATALOG_DIR)", () => {
       appFiles: readDir(join(root as string, "app")),
     });
 
+  it("reads wifi metrics and the catalog header (01 section 3.1, 06 section 9.1)", () => {
+    const c = open();
+    expect(c.metrics("wifi", 4).referencePointSize).toBeGreaterThan(0);
+    expect(c.header).toEqual({ coreuiVersion: 1010, renditionCount: 157938 });
+    expect(c.skipped.renditions).toBe(0);
+    for (const m of [1, 4, 9] as const) {
+      expect(c.metrics("wifi", m).referencePointSize).toBeGreaterThan(0);
+    }
+  });
+
   it("has 8,527 symbols and 1,317 localized variants (05 section 4.3)", () => {
     const c = open();
     expect(c.symbols().length).toBe(8527);
