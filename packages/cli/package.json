@@ -1,0 +1,17 @@
+{
+  "name": "opensymbols",
+  "version": "0.0.0",
+  "description": "Generate an icon package from your own SF Symbols catalog.",
+  "type": "module",
+  "license": "MIT",
+  "bin": { "opensymbols": "./dist/main.js" },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/main.ts --format esm --clean",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opensymbols/decode": "workspace:*"
+  }
+}

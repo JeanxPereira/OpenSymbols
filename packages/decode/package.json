@@ -1,0 +1,16 @@
+{
+  "name": "@opensymbols/decode",
+  "version": "0.0.0",
+  "description": "Decoder for a user-supplied SF Symbols catalog.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run"
+  }
+}

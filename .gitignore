@@ -1,0 +1,13 @@
+node_modules/
+.superpowers/
+dist/
+catalog/
+out/
+*.dump.txt
+generated/
+.snapshots/
+*.car
+*.plist
+*.strings
+colors-*.csv
+base_symbols_map.json
