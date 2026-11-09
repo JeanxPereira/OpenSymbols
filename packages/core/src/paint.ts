@@ -58,6 +58,20 @@ function variableFactor(layer: LayerData, opts: PaintOptions): number {
   return INACTIVE_ALPHA + (1 - INACTIVE_ALPHA) * k;
 }
 
+const HEX_ALPHA = /^#(?:([0-9a-fA-F]{6})([0-9a-fA-F]{2})|([0-9a-fA-F]{3})([0-9a-fA-F]))$/;
+
+/**
+ * `#rrggbbaa` / `#rgba` are not portable SVG paint (older renderers ignore the alpha), so split them
+ * into an opaque `#rrggbb` and an alpha factor. Anything else passes through untouched.
+ */
+function splitAlpha(color: string): { fill: string; alpha: number } {
+  const m = HEX_ALPHA.exec(color);
+  if (!m) return { fill: color, alpha: 1 };
+  if (m[1] !== undefined) return { fill: `#${m[1]}`, alpha: parseInt(m[2]!, 16) / 255 };
+  const rgb = m[3]!.split("").map((c) => c + c).join("");
+  return { fill: `#${rgb}`, alpha: parseInt(m[4]! + m[4]!, 16) / 255 };
+}
+
 export function resolveLayer(layer: LayerData, opts: PaintOptions): ResolvedLayer {
   const style = layer.modes[opts.mode];
   let fill = opts.color;
@@ -86,9 +100,10 @@ export function resolveLayer(layer: LayerData, opts: PaintOptions): ResolvedLaye
     }
   }
 
-  const opacity = style.opacity * level * variableFactor(layer, opts);
+  const split = splitAlpha(fill);
+  const opacity = style.opacity * level * variableFactor(layer, opts) * split.alpha;
   const knockout = style.clearBehind;
-  return { fill, opacity, knockout, visible: opacity !== 0 || knockout };
+  return { fill: split.fill, opacity, knockout, visible: opacity !== 0 || knockout };
 }
 
 /** Why a render is not exact, in a stable order: palette, variable-value, variable-draw. */

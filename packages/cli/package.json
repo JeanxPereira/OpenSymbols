@@ -11,7 +11,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/main.ts --format esm --clean",
+    "build": "tsup src/main.ts src/generate/assemble.ts --format esm --clean && node scripts/copy-demo.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run"
   },

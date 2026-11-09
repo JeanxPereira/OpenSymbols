@@ -186,3 +186,39 @@ describe("resolveApproximations", () => {
     expect(resolveApproximations(symbol({ palette: "stand-in", threshold: 0.5 }), variantOf(symbol({ palette: "stand-in", threshold: 0.5 })), o2)).toEqual(["palette", "variable-value"]);
   });
 });
+
+describe("resolveLayer: portable colours", () => {
+  const named = (light: string, clearBehind = false): LayerData =>
+    layer("primary", { multicolor: style({ kind: "named", name: "n", light, dark: light } as PaintData, 1, clearBehind) });
+  const mc = (l: LayerData) => resolveLayer(l, opts({ mode: "multicolor" }));
+
+  it("splits #rrggbbaa into #rrggbb plus opacity", () => {
+    const r = mc(named("#ff000080"));
+    expect(r.fill).toBe("#ff0000");
+    expect(r.opacity).toBeCloseTo(128 / 255, 6);
+    expect(r.visible).toBe(true);
+  });
+  it("handles #rgba and uppercase", () => {
+    expect(mc(named("#f008"))).toMatchObject({ fill: "#ff0000" });
+    expect(mc(named("#f008")).opacity).toBeCloseTo(136 / 255, 6);
+    expect(mc(named("#FF0000FF"))).toMatchObject({ fill: "#FF0000", opacity: 1 });
+  });
+  it("multiplies into the layer opacity", () => {
+    const l = layer("primary", { multicolor: style({ kind: "named", name: "n", light: "#00000080", dark: "#00000080" } as PaintData, 0.5) });
+    expect(mc(l).opacity).toBeCloseTo(0.5 * (128 / 255), 6);
+  });
+  it("makes a fully transparent colour invisible unless knockout", () => {
+    expect(mc(named("#00000000")).visible).toBe(false);
+    expect(mc(named("#00000000", true))).toMatchObject({ visible: true, knockout: true, fill: "#000000" });
+  });
+  it("applies to tint and palette entries", () => {
+    expect(resolveLayer(layer("primary"), opts({ color: "#11223380" }))).toMatchObject({ fill: "#112233" });
+    const r = resolveLayer(layer("primary"), opts({ mode: "palette", palette: ["#aabbcc00"] }));
+    expect(r).toMatchObject({ fill: "#aabbcc", opacity: 0, visible: false });
+  });
+  it("passes other CSS colours through", () => {
+    expect(resolveLayer(layer("primary"), opts({ color: "currentColor" })).fill).toBe("currentColor");
+    expect(resolveLayer(layer("primary"), opts({ color: "rgb(1 2 3 / 50%)" })).fill).toBe("rgb(1 2 3 / 50%)");
+    expect(resolveLayer(layer("primary"), opts({ color: "#123456" })).fill).toBe("#123456");
+  });
+});

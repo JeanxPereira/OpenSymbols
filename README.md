@@ -141,7 +141,7 @@ When a render is not exact, the `<svg>` carries `data-approximate="true"` and
 | `variable-draw` | the symbol's variable value draws its paths; a `variableValue` is ignored |
 | `text-layout` | `layout="text"`: the scale and baseline rules are inferred, not decoded |
 | `metrics` | `layout="text"` on a symbol without glyph metrics: sized like the box layout, with no baseline shift |
-| `build` | the package was generated from a catalog that is not the validated build (below) |
+| `build` | the package was generated from a catalog that is not the validated build (`build.validated` is false) |
 
 Two fields of `index.json` say how far to trust the output:
 
@@ -157,6 +157,43 @@ Two fields of `index.json` say how far to trust the output:
 
 Generated packages contain Apple's symbol drawings: keep them out of public repositories and
 registries.
+
+## Preview your package
+
+`opensymbols demo` serves a small browser app that lists the symbols of a generated package
+and renders them with the runtime. It reads the package from disk and sends
+nothing anywhere.
+
+```sh
+opensymbols demo --package ./my-icons
+# OpenSymbols demo: http://127.0.0.1:4173/
+```
+
+Open the URL; stop with Ctrl+C. From a checkout of this repository, after `pnpm build`, run
+`node packages/cli/dist/main.js demo --package ./my-icons`.
+
+- `--package DIR` (required): a directory written by `generate`. The command exits with
+  status 2 when `DIR/index.json` is missing, is not a package index, or comes from a newer
+  format than this CLI knows.
+- `--port N` (default 4173): exits with status 2 when the port is taken.
+- `--host ADDR` (default 127.0.0.1): the address to listen on.
+- `--open`: also open the URL in your default browser.
+
+Under WSL2's default NAT networking, a browser or tool inside WSL cannot reach a server bound
+to Windows' `127.0.0.1`. Start the demo with `--host 0.0.0.0` and, from WSL, open the Windows
+host's IP address. The server then listens on all interfaces, so anyone on your network can
+open the page and read the package. Use it only on a network you trust.
+
+To try the demo without a catalog, write a synthetic package of geometric shapes (no Apple
+data) and preview it:
+
+```sh
+node scripts/synthetic-package.mjs --out synthetic-demo --count 200
+node packages/cli/dist/main.js demo --package synthetic-demo
+```
+
+The package holds Apple's drawings when it comes from your catalog: do not expose it on a
+public address.
 
 ## License
 

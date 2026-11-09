@@ -134,6 +134,14 @@ export class Catalog {
     return this.#app;
   }
 
+  /**
+   * The bundle's categories (Docs/format/05 §2.5) in file order; `label` is "" because the
+   * bundle's copy has none (the app's file carries the labels: `appMetadata.categoryLabels`).
+   */
+  get categories(): ReadonlyArray<{ readonly key: string; readonly icon: string; readonly label: string }> {
+    return this.#meta.categories.map((c) => ({ ...c }));
+  }
+
   /** APPEARANCEKEYS name → Appearance id (Docs/format/01 §3.6); a copy. */
   appearances(): Map<string, number> {
     return this.#car.appearances();

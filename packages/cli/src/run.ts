@@ -2,6 +2,7 @@ import { closeSync, openSync, renameSync, rmSync, writeSync } from "node:fs";
 import { parseArgs } from "node:util";
 import type { Catalog } from "@opensymbols/decode";
 import { CatalogNotFoundError, openCatalogDir } from "./catalog-dir.js";
+import { parseDemoArgs, runDemo } from "./demo/cli.js";
 import { dumpAllTo, dumpRendition } from "./dump.js";
 import { describeError, UsageError } from "./errors.js";
 import { groupFailures, runGate } from "./gate.js";
@@ -15,6 +16,8 @@ Commands:
   gate                            decode every rendition and check master compatibility
   generate --out DIR [--name PKG] [--masters all|regular]
                                   write an installable icon package to DIR
+  demo --package DIR [--port 4173] [--host 127.0.0.1] [--open]
+                                  preview a generated package in the browser
 
 Options:
   --catalog DIR                   catalog root (else $SF_CATALOG_DIR)`;
@@ -41,6 +44,11 @@ function noteHeader(catalog: Catalog, io: Io): void {
 
 function main(argv: string[], env: Env, io: Io): number {
   const [command, ...rest] = argv;
+  if (command === "demo") {
+    // Validates only; the server is started by runAsync, which main.ts uses.
+    parseDemoArgs(rest);
+    throw new Error("demo runs through runAsync, not run");
+  }
   if (command === undefined || command === "--help" || command === "-h") {
     io.out(USAGE + "\n");
     return command === undefined ? 2 : 0;
@@ -162,4 +170,15 @@ export function run(argv: string[], env: Env, io: Io): number {
     io.err(`opensymbols: ${describeError(e)}\n`);
     return e instanceof UsageError || e instanceof CatalogNotFoundError ? 2 : 1;
   }
+}
+
+/** Like run, but also serves `demo`, which blocks until SIGINT/SIGTERM (or returns a handle when `wait` is false). */
+export async function runAsync(
+  argv: string[],
+  env: Env,
+  io: Io,
+  options: { appDir?: string; wait?: boolean } = {},
+): Promise<number> {
+  if (argv[0] !== "demo") return run(argv, env, io);
+  return (await runDemo(argv.slice(1), io, options)).code;
 }

@@ -4,11 +4,12 @@ import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { openCatalogDir } from "../../src/catalog-dir.js";
 import { generate } from "../../src/generate/index.js";
 import { run } from "../../src/run.js";
+import { buildBplist } from "../../../decode/test/helpers/build-plist.js";
 import { allMasters, allMastersWithoutMetrics, P_MLLZ, P_MLZ, P_MZ, writeCatalog } from "./fixture.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "opensymbols-generate-"));
@@ -83,6 +84,8 @@ describe("opensymbols generate", () => {
       searchTerms: [],
       year: "2019",
       modes: ["monochrome", "hierarchical", "multicolor", "palette"],
+      variableValue: false,
+      approximate: ["palette", "build"],
       chunk: 0,
     });
     expect(index.skipped).toEqual([{ name: "bad.masters", reason: expect.stringContaining("master 9") }]);
@@ -169,6 +172,56 @@ describe("opensymbols generate", () => {
     expect(index.OldPlain).toBe(index.PlainCircle);
     const knocked = renderToStaticMarkup(createElement(index.SpeakerKnockout, { mode: "monochrome" }));
     expect(knocked).toContain("<mask");
+  });
+});
+
+describe("opensymbols generate: what index.json carries for the demo", () => {
+  const root = writeCatalog(join(tmp, "demo"), {
+    facets: [
+      ["a.one", plain],
+      ["b.two", plain],
+      ["c.three", plain],
+      ["d.four", plain],
+    ],
+    categories: [
+      { key: "empty", icon: "x" },
+      { key: "shapes", icon: "circle" },
+      { key: "arrows", icon: "arrow.right" },
+      { key: "labelled", icon: "tag" },
+    ],
+    symbolCategories: { "a.one": ["shapes"], "b.two": ["shapes", "arrows"], "c.three": ["labelled"], "d.four": [] },
+    app: {
+      "categories.plist": buildBplist([
+        { key: "empty", icon: "x", label: "Empty" },
+        { key: "shapes", icon: "circle", label: "Shapes and such" },
+        { key: "arrows", icon: "arrow.right", label: "Arrows" },
+      ]),
+    },
+  });
+  const OUT = newOut();
+  let index: any;
+  beforeAll(() => {
+    expect(exec(["generate", "--catalog", root, "--out", OUT, "--name", "demo-icons"]).code).toBe(0);
+    index = json(join(OUT, "index.json"));
+  });
+
+  it("names the package", () => {
+    expect(index.package).toEqual({ name: "demo-icons" });
+  });
+
+  it("lists categories in bundle order with app labels, counts of generated symbols, and none empty", () => {
+    expect(index.categories).toEqual([
+      { key: "shapes", label: "Shapes and such", icon: "circle", count: 2 },
+      { key: "arrows", label: "Arrows", icon: "arrow.right", count: 1 },
+      { key: "labelled", label: "labelled", icon: "tag", count: 1 },
+    ]);
+  });
+
+  it("flags each symbol's variable value and approximations", () => {
+    for (const s of index.symbols) {
+      expect(s.variableValue).toBe(false);
+      expect(s.approximate).toEqual(["palette", "build"]);
+    }
   });
 });
 

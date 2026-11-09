@@ -93,6 +93,10 @@ export interface CatalogSpec {
   /** Facet name -> renditions builder, given the facet's identifier. */
   facets: Array<[string, (id: number) => RenditionSpec[]]>;
   aliases?: Record<string, string>;
+  /** The bundle's categories.plist (it has no labels). */
+  categories?: Array<{ key: string; icon: string }>;
+  /** The bundle's symbol_categories.plist: symbol -> category keys. */
+  symbolCategories?: Record<string, string[]>;
   /** Files under app/; no app/ dir when absent. */
   app?: Record<string, Uint8Array | string>;
   /** CARHEADER fields; buildCar's defaults when absent. */
@@ -126,9 +130,10 @@ export function writeCatalog(root: string, spec: CatalogSpec): string {
       year_to_release: { "2019": { iOS: "13.0" } },
     }),
     "name_aliases.strings": buildBplist(spec.aliases ?? {}),
-    "symbol_categories.plist": buildBplist({}),
+    "symbol_categories.plist": buildBplist(spec.symbolCategories ?? {}),
     "symbol_search.plist": buildBplist({}),
   };
+  if (spec.categories !== undefined) files["categories.plist"] = buildBplist(spec.categories);
   for (const [f, bytes] of Object.entries(files)) writeFileSync(join(root, "public", f), bytes);
   if (spec.app !== undefined) {
     mkdirSync(join(root, "app"), { recursive: true });

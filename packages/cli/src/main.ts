@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { run } from "./run.js";
+import { runAsync } from "./run.js";
 
-process.exitCode = run(process.argv.slice(2), process.env, {
+process.exitCode = await runAsync(process.argv.slice(2), process.env, {
   out: (s) => process.stdout.write(s),
   err: (s) => process.stderr.write(s),
 });

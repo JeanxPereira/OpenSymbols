@@ -1,30 +1,20 @@
 // `opensymbols generate`: the user's catalog -> an installable icon package.
-import { FORMAT_VERSION, type RenderMode } from "@opensymbols/core";
+import type { RenderMode } from "@opensymbols/core";
 import { DecodeError, type Catalog, type SymbolEntry } from "@opensymbols/decode";
 import { describeError, EncodeError, UsageError } from "../errors.js";
 import { encodeSymbol, type Palette } from "./encode.js";
 import { fingerprint, REFERENCE_BUILD } from "./fingerprint.js";
-import { assignNames } from "./names.js";
+import { assemblePackage, symbolFacts, type AssembleSymbol } from "./assemble.js";
 import { buildPalette } from "./stand-in-palette.js";
-import { CHUNK_SIZE, checkOutDir, writePackage } from "./write.js";
+import { checkOutDir } from "./write.js";
+
+export type { IndexSymbol } from "./assemble.js";
 
 export interface GenerateOptions {
   out: string;
   /** package.json `name`. */
   packageName: string;
   masters: "all" | "regular";
-}
-
-/** One `index.json` symbol entry. */
-export interface IndexSymbol {
-  name: string;
-  component: string;
-  aliases: string[];
-  categories: string[];
-  searchTerms: string[];
-  year: string | null;
-  modes: RenderMode[];
-  chunk: number;
 }
 
 /** More than this share of skipped symbols fails the run (exit 1, after writing). */
@@ -69,7 +59,7 @@ export function generate(catalog: Catalog, opts: GenerateOptions, io: { err(text
   checkOutDir(opts.out);
   const { note: headerNote, ...build } = fingerprint(catalog);
 
-  const encoded: Array<{ entry: SymbolEntry; json: string; modes: RenderMode[] }> = [];
+  const encoded: Array<{ entry: SymbolEntry; json: string; facts: AssembleSymbol["facts"] }> = [];
   const skipped: Array<{ name: string; reason: string; group: string; detail: string }> = [];
   const localized: Array<{ name: string; base: string }> = [];
   // Warning text (symbol name stripped) -> the symbols it was raised for.
@@ -87,7 +77,7 @@ export function generate(catalog: Catalog, opts: GenerateOptions, io: { err(text
         validated: build.validated,
         warnings: notes,
       });
-      encoded.push({ entry, json: JSON.stringify(data), modes: data.modes });
+      encoded.push({ entry, json: JSON.stringify(data), facts: symbolFacts(data) });
     } catch (e) {
       // One bad symbol must not abort the run: skip it, name it and say why. Anything else is a
       // bug, and stops the run naming the symbol it was raised on.
@@ -106,51 +96,24 @@ export function generate(catalog: Catalog, opts: GenerateOptions, io: { err(text
   }
 
   // Names are assigned over the generated symbols only; a collision is fatal before writing.
-  const aliases = new Map<string, string>();
-  for (const { entry } of encoded) for (const a of entry.aliases) aliases.set(a, entry.name);
-  let named;
-  try {
-    named = assignNames(encoded.map((s) => s.entry.name), aliases);
-  } catch (e) {
-    throw new Error(`cannot name the components, nothing written: ${describeError(e)}`);
-  }
-  const { names, aliasExports, reports } = named;
-  // Two modules whose names differ only in case are one file on Windows and macOS. (Alias
-  // exports are only names in index.js, not files.)
-  const byLower = new Map<string, string>();
-  for (const component of names.values()) {
-    const other = byLower.get(component.toLowerCase());
-    if (other !== undefined) {
-      throw new Error(
-        `cannot name the components, nothing written: "${other}" and "${component}" differ only in case`,
-      );
-    }
-    byLower.set(component.toLowerCase(), component);
-  }
-
-  const symbols: IndexSymbol[] = encoded.map(({ entry, modes }, i) => ({
-    name: entry.name,
-    component: names.get(entry.name) as string,
-    aliases: entry.aliases,
-    categories: entry.categories,
-    searchTerms: entry.searchTerms,
-    year: entry.year ?? null,
-    modes,
-    chunk: Math.floor(i / CHUNK_SIZE),
-  }));
-  const index = {
-    formatVersion: FORMAT_VERSION,
+  const { aliasExports, reports } = assemblePackage({
+    out: opts.out,
+    packageName: opts.packageName,
     build,
     palette: pal.source,
-    symbols,
-    skipped: skipped.map(({ name, reason }) => ({ name, reason })),
+    symbols: encoded.map(({ entry, json, facts }) => ({
+      name: entry.name,
+      aliases: entry.aliases,
+      categories: entry.categories,
+      searchTerms: entry.searchTerms,
+      year: entry.year ?? null,
+      json,
+      facts,
+    })),
+    categories: catalog.categories,
+    categoryLabels: catalog.appMetadata?.categoryLabels,
+    skipped,
     localized,
-  };
-  writePackage(opts.out, {
-    packageName: opts.packageName,
-    index,
-    symbols: encoded.map(({ entry, json }) => ({ component: names.get(entry.name) as string, json })),
-    aliasExports: [...aliasExports].map(([alias, modern]) => [alias, names.get(modern) as string] as const),
   });
 
   // The report.
