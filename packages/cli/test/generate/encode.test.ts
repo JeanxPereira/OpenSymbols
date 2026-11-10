@@ -11,7 +11,7 @@ import { buildStyle, type StyleClassSpec } from "../../../decode/test/helpers/bu
 import { nibbles, PATH_HEADER } from "../../../decode/test/helpers/nibbles.js";
 
 // Atoms, Docs/format/02 section 3.
-const SVG = 0, G = 1, VIEWBOX = 2, PATH = 3, TRANSFORM = 21, D = 22;
+const SVG = 0, G = 1, VIEWBOX = 2, PATH = 3, CIRCLE = 5, CX = 14, CY = 15, TRANSFORM = 21, D = 22, ID_RA = 64;
 const MOTION_GROUP = 34, DRAW_REVERSES = 38, VALUE_MODE = 39, ALWAYS_PULSES = 41;
 const COLOR = 49, DEFAULTS = 52, TRUE = 53, FALSE = 54, PRIMARY = 55, SECONDARY = 56;
 const ONE = 32, ID_S = 63, SYSTEM_BLUE = 73, SYSTEM_TEAL = 84, TINT = 86, WHITE = 87, CUSTOM = 88;
@@ -38,7 +38,7 @@ interface LayerSpec {
 }
 
 /** A symbol document: `<svg viewBox="0 0 3 5"><g id="s" transform=…>` with one path per layer. */
-function symbolDoc(layers: LayerSpec[], transform = "matrix(1 0 0 1 0 0)"): Uint8Array {
+function symbolDoc(layers: LayerSpec[], transform = "matrix(1 0 0 1 0 0)", marker?: [string, string]): Uint8Array {
   const pool: Array<string | Uint8Array> = [];
   const s = (v: string | Uint8Array) => {
     let i = pool.indexOf(v);
@@ -69,8 +69,18 @@ function symbolDoc(layers: LayerSpec[], transform = "matrix(1 0 0 1 0 0)"): Uint
     ],
   });
   const g: NodeSpec = { tag: G, attrs: [{ name: TRANSFORM, value: s(transform) }], children: shapes };
-  const root: NodeSpec = { tag: SVG, attrs: [{ name: VIEWBOX, value: s(LIST_0_0_3_5) }], children: [g] };
-  return buildBvg({ typeCode: 0x11, localStrings: pool, idPairs: [{ stringIndex: ID_S, target: g }], root, style });
+  // Docs/format/06 section 9.2: an `ra` circle without r, outside g#s (viewBox units).
+  const ra: NodeSpec | undefined =
+    marker === undefined
+      ? undefined
+      : { tag: CIRCLE, attrs: [{ name: CX, value: s(marker[0]) }, { name: CY, value: s(marker[1]) }] };
+  const root: NodeSpec = {
+    tag: SVG,
+    attrs: [{ name: VIEWBOX, value: s(LIST_0_0_3_5) }],
+    children: ra === undefined ? [g] : [g, ra],
+  };
+  const idPairs = [{ stringIndex: ID_S, target: g }, ...(ra === undefined ? [] : [{ stringIndex: ID_RA, target: ra }])];
+  return buildBvg({ typeCode: 0x11, localStrings: pool, idPairs, root, style });
 }
 
 const metricsTlv = (referencePointSize: number) =>
@@ -81,19 +91,29 @@ const metricsTlv = (referencePointSize: number) =>
 
 // Key format: Direction, Appearance, Localization, Identifier, GlyphWeight.
 const KEY_FORMAT = [4, 7, 13, 17, 26];
-const rend = (id: number, weight: number, layers: LayerSpec[], extra: Record<number, number> = {}): RenditionSpec => ({
+const rend = (
+  id: number,
+  weight: number,
+  layers: LayerSpec[],
+  extra: Record<number, number> = {},
+  marker?: [string, string],
+): RenditionSpec => ({
   key: { 17: id, 26: weight, ...extra },
-  payload: symbolDoc(layers, `matrix(1 0 0 1 ${weight} 0)`),
+  payload: symbolDoc(layers, `matrix(1 0 0 1 ${weight} 0)`, marker),
   tlv: metricsTlv(weight * 10),
 });
-const allMasters = (id: number, at: (m: number) => LayerSpec[], extra: Record<number, number> = {}) =>
-  [1, 4, 9].map((m) => rend(id, m, at(m), extra));
+const allMasters = (
+  id: number,
+  at: (m: number) => LayerSpec[],
+  extra: Record<number, number> = {},
+  marker?: (m: number) => [string, string],
+) => [1, 4, 9].map((m) => rend(id, m, at(m), extra, marker?.(m)));
 
 const two = (m: number): LayerSpec[] => [{ d: m === 9 ? P_MLZ_WIDE : P_MLZ }, { d: P_MZ, hier: SECONDARY }];
 
 const car = buildCar({
   keyFormat: KEY_FORMAT,
-  facets: { two: 1, extra: 2, blue: 3, dark: 4, pair: 5, op: 6, odd: 7, snow: 8, teal: 9, custom: 10, sparse: 11, thin: 12, corrupt: 13, bare: 14 },
+  facets: { two: 1, extra: 2, blue: 3, dark: 4, pair: 5, op: 6, odd: 7, snow: 8, teal: 9, custom: 10, sparse: 11, thin: 12, corrupt: 13, bare: 14, anchored: 15 },
   appearances: { "NSAppearanceNameDarkAqua": 1, "NSAppearanceNameAccessibility": 3 },
   renditions: [
     ...allMasters(1, two),
@@ -120,6 +140,8 @@ const car = buildCar({
     // dark at direction 0 is stored but its regular rendition is not a BVG document
     ...allMasters(13, () => [{ d: P_MZ }], { 7: 0 }),
     { key: { 17: 13, 26: 4, 7: 1 }, payload: new TextEncoder().encode("not a BVG"), tlv: metricsTlv(40) },
+    // an rotation-anchor marker, at a point that moves with the master (06 section 9.2)
+    ...allMasters(15, () => [{ d: P_MLZ }], {}, (m) => [String(10 + m), "11"]),
     // no TLV 1018 at any master
     ...[1, 4, 9].map((m) => ({ key: { 17: 14, 26: m }, payload: symbolDoc([{ d: P_MZ }]) })),
   ],
@@ -179,6 +201,26 @@ describe("encodeSymbol", () => {
     expect(v.variableValueMode).toBe("color");
     expect(v.vcContinuous).toBe(false);
     expect(v.anim).toEqual({ drawReversesMotionGroups: true, shapeGroups: [], drawAttachmentData: [] });
+  });
+
+  it("writes the metric centre per master, from the metrics (06 section 9.3)", () => {
+    const v = encode("two").variants.a0d0!;
+    // x_vb = (0.5 + 3 + 0.75) / 2 - 0.5 = 1.625; y_vb = 5 - (9.25 / 2 + 0.1) = 0.275; path = vb - (w, 0)
+    for (const w of [1, 4, 9] as const) {
+      const c = v.masters[w]!.metricCenter!;
+      expect(c[0]).toBeCloseTo(1.625 - w, 5);
+      expect(c[1]).toBeCloseTo(0.275, 5);
+    }
+    expect(v.masters[4]!.rotationAnchor).toBeUndefined();
+    expect("rotationAnchor" in v.masters[4]!).toBe(false);
+    const bare = encode("bare").variants.a0d0!;
+    for (const w of [1, 4, 9] as const) expect("metricCenter" in bare.masters[w]!).toBe(false);
+  });
+
+  it("writes the rotation anchor per master, mapped into path space (06 section 9.2)", () => {
+    const v = encode("anchored").variants.a0d0!;
+    // marker (10 + w, 11) in viewBox units, transform (1 0 0 1 w 0): path (10, 11) at every master
+    for (const w of [1, 4, 9] as const) expect(v.masters[w]!.rotationAnchor).toEqual([10, 11]);
   });
 
   it("writes build.validated from the options", () => {

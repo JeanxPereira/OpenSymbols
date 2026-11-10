@@ -34,8 +34,12 @@ const ROLE_LEVEL: Record<Role, { light: number; dark: number }> = {
 
 const ROLE_INDEX: Record<Role, number> = { primary: 0, secondary: 1, tertiary: 2 };
 
-/** [INF] The dimmed look of an inactive variable-colour layer; the exact factor is not decoded. */
-export const INACTIVE_ALPHA = 0.25;
+/**
+ * The alpha of an inactive variable-colour layer: the target of `variable-alpha-fade`, float32
+ * `0.30000001192092896` (0 only with option bit 29, which the static form does not offer).
+ * Docs/format/07 section 2.3 property 10, section 9.2.
+ */
+export const INACTIVE_ALPHA = Math.fround(0.3);
 
 /** [INF] Half-width of the continuous variable-colour ramp around a layer's threshold; not decoded. */
 export const CONTINUOUS_BAND = 0.06;

@@ -184,6 +184,36 @@ function layerStyles(i, knockout, colour) {
   };
 }
 
+/** The shared formula (Docs/format/06 section 9.3), loaded from the built core in `main`. */
+let metricCenter;
+
+/**
+ * Stroke keyframes (Docs/format/06 section 6.1, 08 section 1) so Draw has something to animate:
+ * {flags, progress, d0, d1}, d = subpath + fraction. A bar (one rectangle, perimeter P, short side w)
+ * follows the 08 section 12.1 shape: whole outline at progress 0, the centreline ends at progress 1.
+ * A ring (two subpaths) cuts both loops: nothing at progress 0, the two half-way points at 1.
+ */
+function strokeKeyframes(spec, layer, i) {
+  if (layer.knockout) return undefined;
+  if (spec.kind === 'bars') {
+    const xs = layer.cmds.filter((c) => c[0] === 'M' || c[0] === 'L').map((c) => c.slice(1));
+    const w = Math.max(...xs.map((p) => p[0])) - Math.min(...xs.map((p) => p[0]));
+    const h = Math.max(...xs.map((p) => p[1])) - Math.min(...xs.map((p) => p[1]));
+    const P = 2 * (w + h);
+    return [
+      { flags: 0, progress: 0, d0: 0, d1: round6((P - w) / P) },
+      { flags: 0, progress: 1, d0: round6(w / P), d1: round6((w + h) / P) },
+    ];
+  }
+  if (spec.kind === 'ring' && i === 0) {
+    return [
+      { flags: 0, progress: 0, d0: 0, d1: 1 },
+      { flags: 0, progress: 1, d0: 0.5, d1: 1.5 },
+    ];
+  }
+  return undefined;
+}
+
 const METRICS = { referencePointSize: 13.9, baselineOffset: 2.5, capHeight: 9.7, leftInset: 0.6, rightInset: 0.6 };
 
 /** One variant: appearance 0 or 1 (dark: a little heavier), direction 0, 4 or 5 (5 is mirrored). */
@@ -201,20 +231,40 @@ function variant(spec, dark, direction) {
       argCounts.push(args.length);
     }
     const colour = COLOURS[(spec.colour + i) % COLOURS.length];
-    const data = { cmd: [start, argCounts.length], ...layerStyles(i, l.knockout === true, colour), motionGroup: i };
+    const data = {
+      cmd: [start, argCounts.length],
+      ...layerStyles(i, l.knockout === true, colour),
+      motionGroup: 1 + (i % spec.motionGroups), // 1..4: the groups an effect staggers by
+    };
+    const keyframes = strokeKeyframes(spec, reference[i], i);
+    if (keyframes !== undefined) data.anim = { strokeKeyframes: keyframes };
     if (spec.thresholds !== undefined && !l.knockout) data.variableThreshold = spec.thresholds[i];
     return data;
   });
   const masters = {};
   for (const [m, ls] of perMaster) {
+    const viewBox = [0, 0, 14, 14];
     masters[m] = {
       args: ls.flatMap((l) => l.cmds.flatMap(([, ...args]) => args.map(round3))),
-      viewBox: [0, 0, 14, 14],
+      viewBox,
       transform: spec.transform,
       metrics: METRICS,
+      metricCenter: metricCenter(viewBox, spec.transform, METRICS).map(round3),
     };
+    // A pivot that moves a little with the weight, like a real master's marker.
+    if (spec.anchor !== undefined) {
+      masters[m].rotationAnchor = [round3(CANVAS / 2 + spec.anchor[0] + 6 * (MASTERS.find(([k]) => k === m)[1] - 1)), round3(CANVAS / 2 + spec.anchor[1])];
+    }
   }
-  return { ops, argCounts, masters, layers, variableValueMode: 'color', vcContinuous: false };
+  return {
+    ops,
+    argCounts,
+    masters,
+    layers,
+    variableValueMode: 'color',
+    vcContinuous: false,
+    anim: { drawReversesMotionGroups: spec.drawReverses },
+  };
 }
 
 const CATEGORIES = [
@@ -239,6 +289,8 @@ const YEARS = ['2019', '2020', '2021', '2022', '2023', '2024'];
 
 function makeSymbols(count, seed, componentName) {
   const rand = rng(seed);
+  // A second stream for the effect fields, so adding them did not move any name or shape.
+  const rand2 = rng((seed ^ 0x9e3779b9) >>> 0);
   const pick = (list) => list[Math.floor(rand() * list.length)];
   const used = new Set();
   const symbols = [];
@@ -252,7 +304,13 @@ function makeSymbols(count, seed, componentName) {
       bars: hasThresholds ? 3 : 2 + Math.floor(rand() * 3),
       colour: Math.floor(rand() * COLOURS.length),
       transform: undefined,
+      motionGroups: 1 + Math.floor(rand2() * 4),
+      drawReverses: rand2() < 0.5,
+      anchor: undefined,
     };
+    const anchored = rand2() < 0.3;
+    const anchorAt = [round3((rand2() - 0.5) * 600), round3((rand2() - 0.5) * 600)];
+    if (anchored) spec.anchor = anchorAt;
     if (spec.kind === 'bars' && spec.knockout && spec.bars === 4) spec.bars = 3; // at most 4 layers
     if (hasThresholds) spec.thresholds = [0.34, 0.67, 1];
     const scale = round6(0.0062 + rand() * 0.001);
@@ -317,6 +375,7 @@ async function main() {
     process.exit(1);
   }
   const { assemblePackage, symbolFacts, componentName } = assemble;
+  ({ metricCenter } = await import(pathToFileURL(join(root, 'packages', 'core', 'dist', 'index.js')).href));
   const symbols = makeSymbols(opts.count, opts.seed, componentName);
   assemblePackage({
     out: opts.out,

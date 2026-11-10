@@ -1,0 +1,14 @@
+export { defaultSpec } from "./spec.js";
+export type { EffectKind, LayerState, Matrix, Spec } from "./spec.js";
+export { toAnimDrawing } from "./drawing.js";
+export type { AnimDrawing, AnimLayer, AnimPath, StrokeAttachment, StrokeKeyframe } from "./drawing.js";
+export { CURVE_COUNT, curve } from "./curves.js";
+export { evalTrack, FILTER, LAYER_FLAG, trackEnd } from "./keyframes.js";
+export type { Filter, Property, Segment, Track } from "./keyframes.js";
+export { duration, loopStart, sample } from "./sample.js";
+export { staggerOffsets } from "./groups.js";
+export { replaceDuration, replacePair, replaceSubtype } from "./replace-pair.js";
+export type { ReplaceSubtype } from "./replace-pair.js";
+export type { Plan, PlanBuilder } from "./sample.js";
+export { clipOutline, strokeLength } from "./clip/cut.js";
+export { resolveRiders } from "./clip/riders.js";

@@ -160,7 +160,9 @@ export function buildSvg(
       masks.push(
         node("mask", { id, maskUnits: "userSpaceOnUse", ...rectAttrs }, [
           node("rect", { ...rectAttrs, fill: "#fff" }),
-          node("path", { d, fill: "#000" }),
+          // `data-layer` lets an effects driver move this copy with its layer (the layer's own
+          // `<g data-layer>` is never painted).
+          node("path", { d, fill: "#000", "data-layer": i }),
         ]),
       );
       painted = [node("g", { mask: `url(#${id})` }, painted)];
@@ -168,7 +170,9 @@ export function buildSvg(
     }
     const attrs: SvgNode["attrs"] = { d, fill: r.fill };
     if (r.opacity < 1) attrs["fill-opacity"] = round3(r.opacity);
-    painted.push(node("path", attrs));
+    // Each layer in its own group, which carries only its source index: an effects driver writes
+    // the layer's transform, opacity and display there; statically it draws nothing of its own.
+    painted.push(node("g", { "data-layer": i }, [node("path", attrs)]));
   });
 
   // 6 significant digits: the scale is about referencePointSize / 2048 (Docs/format/02 section 5.3).

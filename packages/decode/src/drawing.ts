@@ -72,6 +72,8 @@ export interface Drawing {
   wiggleStyle?: "linear" | "clockwise" | "counterClockwise";
   wiggleAngle?: number;
   rotatesClockwise?: boolean;
+  /** 06 §9.2, path space. The metric centre (§9.3) needs the metrics: the generator computes it. */
+  rotationAnchor?: [number, number];
   shapeGroups: ShapeGroup[];
   drawAttachmentData: Array<{ a: number; b: number; anchorX: number; anchorY: number }>;
 }
@@ -164,6 +166,39 @@ function readTransform(root: BvgNode): Drawing["transform"] {
     throw new DecodeError(WHERE, `transform "${text ?? ""}" is not matrix(a b c d e f) (06 §2.2)`);
   }
   return parts.map((t) => parseNumber(t, "transform")) as Drawing["transform"];
+}
+
+// ---- 06 §9.2 rotation anchor ----
+
+function readRotationAnchor(root: BvgNode, transform: Drawing["transform"]): [number, number] | undefined {
+  let s: BvgNode | undefined;
+  for (const n of preOrder(root)) {
+    if (n.tagIndex === TAG_G && n.id === "s") {
+      s = n;
+      break;
+    }
+  }
+  const inside = new Set<BvgNode>(s === undefined ? [] : preOrder(s));
+  for (const n of preOrder(root)) {
+    if (n.tagIndex !== TAG_CIRCLE || n.id !== "ra" || attr(n, ATTR_R) !== undefined) continue;
+    const cx = attr(n, ATTR_CX);
+    const cy = attr(n, ATTR_CY);
+    if (cx?.kind !== "string" || cy?.kind !== "string") continue;
+    const tx = cx.text.trim();
+    const ty = cy.text.trim();
+    const X = Number(tx);
+    const Y = Number(ty);
+    if (tx === "" || ty === "" || !Number.isFinite(X) || !Number.isFinite(Y)) continue;
+    if (inside.has(n)) return [X, Y];
+    // Outside g#s the marker is in viewBox units: through the inverse of the transform.
+    const [a, b, c, d, e, f] = transform;
+    const det = a * d - b * c;
+    if (det === 0 || !Number.isFinite(det)) return undefined;
+    const x = (d * (X - e) - c * (Y - f)) / det;
+    const y = (-b * (X - e) + a * (Y - f)) / det;
+    return Number.isFinite(x) && Number.isFinite(y) ? [x, y] : undefined;
+  }
+  return undefined;
 }
 
 // ---- 06 §3 geometry ----
@@ -419,9 +454,10 @@ export function buildDrawing(doc: BvgDocument, style: StyleBlock): Drawing {
     throw new DecodeError(WHERE, "no -sfsymbols-variable-value-mode on .defaults (06 §5.2)");
   }
 
+  const transform = readTransform(doc.root);
   const drawing: Drawing = {
     viewBox: readViewBox(doc.root),
-    transform: readTransform(doc.root),
+    transform,
     layers,
     drawReversesMotionGroups: dp.drawReversesMotionGroups ?? false,
     variableValueMode: dp.variableValueMode,
@@ -429,6 +465,8 @@ export function buildDrawing(doc: BvgDocument, style: StyleBlock): Drawing {
     shapeGroups,
     drawAttachmentData: readDrawAttachmentData(doc.root),
   };
+  const anchor = readRotationAnchor(doc.root, transform);
+  if (anchor !== undefined) drawing.rotationAnchor = anchor;
   if (dp.wiggleStyle !== undefined) drawing.wiggleStyle = dp.wiggleStyle;
   if (dp.wiggleAngle !== undefined) drawing.wiggleAngle = dp.wiggleAngle;
   // 06 §5.2: absent rotates-clockwise stays unset, which is not false.

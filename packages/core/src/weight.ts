@@ -42,6 +42,10 @@ export interface Interpolated {
   transform: Transform;
   /** Undefined when a master the weight draws from has no metrics. */
   metrics?: MasterMetrics;
+  /** Interpolated like the metrics: undefined when a used master lacks it (06 section 9.2). */
+  rotationAnchor?: [number, number];
+  /** Same rule (06 section 9.3). */
+  metricCenter?: [number, number];
   /** Not exact: a weight between the masters, or one whose master is not stored. */
   approximate: boolean;
   /** The weight leans toward ultralight or black and that master is not stored (it degrades to regular). */
@@ -81,11 +85,22 @@ export function interpolate(variant: VariantData, w: Weight): Interpolated {
     metrics = {} as MasterMetrics;
     for (const k of METRIC_KEYS) metrics[k] = mix(rm[k], um[k], bm[k], s);
   }
+  const point = (key: "rotationAnchor" | "metricCenter"): [number, number] | undefined => {
+    const r = R[key];
+    const u = s.ul > 0 ? ul[key] : r;
+    const bb = s.b > 0 ? b[key] : r;
+    if (r === undefined || u === undefined || bb === undefined) return undefined;
+    return mixArray(r, u, bb, s);
+  };
+  const rotationAnchor = point("rotationAnchor");
+  const metricCentre = point("metricCenter");
   return {
     args: mixArray(R.args, ul.args, b.args, s),
     viewBox: mixArray(R.viewBox, ul.viewBox, b.viewBox, s),
     transform: mixArray(R.transform, ul.transform, b.transform, s),
     ...(metrics !== undefined ? { metrics } : {}),
+    ...(rotationAnchor !== undefined ? { rotationAnchor } : {}),
+    ...(metricCentre !== undefined ? { metricCenter: metricCentre } : {}),
     approximate: !exact,
     masterMissing,
   };

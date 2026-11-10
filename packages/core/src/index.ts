@@ -1,4 +1,5 @@
 export * from "./format.js";
+export { metricCenter, viewBoxToPath } from "./anchor.js";
 export { weightValue, weightScalars, interpolate } from "./weight.js";
 export type { Interpolated } from "./weight.js";
 export { resolveLayer, resolveApproximations, INACTIVE_ALPHA, CONTINUOUS_BAND } from "./paint.js";

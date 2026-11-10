@@ -18,6 +18,7 @@ const WIGGLE_STYLE = 47, ROTATES_CW = 48;
 const COLOR = 49, DRAW = 50, ERASE = 51, DEFAULTS = 52, TRUE = 53, FALSE = 54;
 const PRIMARY = 55, SECONDARY = 56, TERTIARY = 57, MONOCHROME = 60, KEYFRAMES = 61;
 const ID_S = 63, ID_DA = 65, TINT = 86, WHITE = 87, CUSTOM = 88;
+const ID_RA = 64;
 const NO_VALUE = 0xff;
 const MONO = 0x80, MULTI = 0x81, HIER = 0x82, SHAPE_GROUP = 0x83;
 
@@ -645,5 +646,52 @@ describe("parseStrokeKeyframes (Docs/format/06 §6.1)", () => {
     expect(() => parseStrokeKeyframes([0, 1.5, 0.5, 0, 0])).toThrow(DecodeError);
     expect(() => parseStrokeKeyframes([0, 0, 0.5, -0.1, 0])).toThrow(DecodeError);
     expect(() => parseStrokeKeyframes([0, 0, Number.NaN, 0, 0])).toThrow(DecodeError);
+  });
+});
+
+describe("rotation anchor (Docs/format/06 §9.2)", () => {
+  const T = "matrix(0.01 0 0 0.01 -1 18)";
+  const marker = (p: Pool, cx: string, cy: string): NodeSpec => ({
+    tag: CIRCLE,
+    attrs: [
+      { name: CX, value: p.s(cx) },
+      { name: CY, value: p.s(cy) },
+    ],
+  });
+  const withMarker = (p: Pool, m: NodeSpec, where: "outside" | "inside", transform = T) =>
+    draw(p, {
+      classes: [],
+      rules: [],
+      transform,
+      ...(where === "outside" ? { siblings: [m] } : { shapes: [m] }),
+      extraIds: [{ stringIndex: ID_RA, target: m }],
+    });
+
+  it("maps a marker outside g#s through the inverse transform (the worked example)", () => {
+    const p = new Pool();
+    const d = withMarker(p, marker(p, "10", "11"), "outside");
+    expect(d.rotationAnchor![0]).toBeCloseTo(1100, 6);
+    expect(d.rotationAnchor![1]).toBeCloseTo(-700, 6);
+    expect(d.layers.length).toBe(0);
+  });
+
+  it("takes a marker inside g#s as already in path space", () => {
+    const p = new Pool();
+    const d = withMarker(p, marker(p, "10", "11"), "inside");
+    expect(d.rotationAnchor).toEqual([10, 11]);
+  });
+
+  it("leaves it unset without a marker, with a singular transform, or with bad numbers", () => {
+    const p = new Pool();
+    expect(draw(p, { classes: [], rules: [] }).rotationAnchor).toBeUndefined();
+    expect(withMarker(p, marker(p, "10", "11"), "outside", "matrix(0 0 0 0 1 1)").rotationAnchor).toBeUndefined();
+    expect(withMarker(p, marker(p, "x", "11"), "outside").rotationAnchor).toBeUndefined();
+  });
+
+  it("does not take a circle with r as the marker", () => {
+    const p = new Pool();
+    const m = marker(p, "10", "11");
+    m.attrs!.push({ name: R, value: p.s("2") });
+    expect(withMarker(p, m, "outside").rotationAnchor).toBeUndefined();
   });
 });

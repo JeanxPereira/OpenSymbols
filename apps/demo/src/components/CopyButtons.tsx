@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { SymbolData } from "@opensymbols/core";
-import type { IconProps } from "@opensymbols/react";
-import { copyText, deepImportLine, importLine, jsxFor, svgFor } from "../copy.js";
+import type { EffectProps, IconProps } from "@opensymbols/react";
+import { copyText, deepImportLine, EFFECTS_IMPORT, importLine, jsxFor, replaceImportLines, replaceJsxFor, svgFor, type ReplaceOptions } from "../copy.js";
 
 const STATUS_MS = 1600;
 
@@ -11,6 +11,10 @@ export interface CopyButtonsProps {
   /** Undefined while the symbol's chunk loads: SVG copy waits for it. */
   data: SymbolData | undefined;
   props: IconProps;
+  /** The animation panel's effect: written into the JSX only (an SVG is static). */
+  effect?: EffectProps | undefined;
+  /** The panel is in Replace mode with a target: the import and JSX are the Replace snippet. */
+  replace?: (ReplaceOptions & { to: string }) | undefined;
 }
 
 type Kind = "import" | "deep-import" | "jsx" | "svg";
@@ -22,16 +26,22 @@ const LABELS: Record<Kind, string> = {
   svg: "SVG",
 };
 
-export function CopyButtons({ pkg, component, data, props }: CopyButtonsProps) {
+export function CopyButtons({ pkg, component, data, props, effect, replace }: CopyButtonsProps) {
   const [status, setStatus] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => clearTimeout(timer.current), []);
 
-  const jsx = jsxFor(component, props);
+  const jsx = replace ? replaceJsxFor(component, replace.to, props, replace) : jsxFor(component, effect ? { ...props, effect } : props);
+  // An effect needs the driver registered (`<Replace>`'s import already loads it).
+  const imports = replace
+    ? replaceImportLines(pkg, component, replace.to)
+    : effect
+      ? `${importLine(pkg, component)}\n${EFFECTS_IMPORT}`
+      : importLine(pkg, component);
   const text = (kind: Kind): string | undefined => {
     switch (kind) {
       case "import":
-        return importLine(pkg, component);
+        return imports;
       case "deep-import":
         return deepImportLine(pkg, component);
       case "jsx":
@@ -60,7 +70,7 @@ export function CopyButtons({ pkg, component, data, props }: CopyButtonsProps) {
     <section className="copy" aria-label="Copy">
       <pre className="copy-code">
         <code>
-          {importLine(pkg, component)}
+          {imports}
           {"\n\n"}
           {jsx}
         </code>

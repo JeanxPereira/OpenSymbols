@@ -61,6 +61,10 @@ export interface MasterData {
   transform: Transform;
   /** TLV 1018 (Docs/format/06 section 9.1); absent when the rendition stores none. */
   metrics?: MasterMetrics;
+  /** The `ra` marker in path space (Docs/format/06 section 9.2); absent when the document has none. */
+  rotationAnchor?: [number, number];
+  /** The glyph metric centre in path space (Docs/format/06 section 9.3); absent without metrics. */
+  metricCenter?: [number, number];
 }
 
 export interface VariantData {

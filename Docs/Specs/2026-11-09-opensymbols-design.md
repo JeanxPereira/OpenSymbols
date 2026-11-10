@@ -40,7 +40,7 @@ from one; the generator itself runs anywhere Node runs.
 6. Every symbol effect with its options, behaving keyframe for keyframe like Apple's
    (RenderBox 8.0.84): Appear, Disappear, Bounce, Breathe, Draw On/Off, Pulse, Rotate,
    Scale, Replace, Magic Replace, Wiggle and Variable Color, including Variable Color's
-   animated forms (iterative, cumulative, reversing).
+   animated forms (iterative, cumulative, reversing; animated forms pending, §9.2).
 7. A demo page that previews all of the above for any symbol, opens fast and stays
    smooth with the full public catalog.
 8. Animation is opt-in: a project that only draws static icons pays nothing for the
@@ -296,7 +296,8 @@ Modelled on SwiftUI's `symbolEffect`, the vocabulary SF Symbols users already kn
 
 ```tsx
 // indefinite: runs while active
-<Wifi effect={{ kind: "variableColor", style: "iterative" }} active={isSearching} />
+// (Variable Color's animated forms are pending, P5, §9.2: `variableColor` holds a static value only)
+<Wifi effect={{ kind: "pulse" }} active={isSearching} />
 
 // discrete: plays once each time `trigger` changes
 <Bell effect={{ kind: "bounce", direction: "up", byLayer: true }} trigger={count} />
@@ -307,9 +308,11 @@ Modelled on SwiftUI's `symbolEffect`, the vocabulary SF Symbols users already kn
 // replace: swap to another symbol
 <Replace from={PlayFill} to={PauseFill} show={playing ? "to" : "from"} style="downUp" magic />
 
-// imperative
-const ref = useRef<SymbolHandle>(null);
-ref.current?.play({ kind: "wiggle" });
+// imperative: `effectRef` receives the handle; `ref` stays the <svg> element
+const handle = useRef<SymbolHandle>(null);
+<Bell effectRef={handle} />
+handle.current?.play({ kind: "wiggle" });
+handle.current?.stop();
 ```
 
 Effect props are a discriminated union on `kind`: `direction` only on the kinds that take

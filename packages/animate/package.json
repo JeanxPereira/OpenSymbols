@@ -1,0 +1,52 @@
+{
+  "name": "@opensymbols/animate",
+  "version": "0.0.0",
+  "description": "Symbol effects for OpenSymbols: a pure keyframe engine over the generated data.",
+  "type": "module",
+  "license": "MIT",
+  "sideEffects": [
+    "./dist/react/index.js"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "import": "./dist/react/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@opensymbols/core": "workspace:*"
+  },
+  "peerDependencies": {
+    "@opensymbols/react": "workspace:^",
+    "react": ">=19"
+  },
+  "peerDependenciesMeta": {
+    "@opensymbols/react": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@opensymbols/react": "workspace:*",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "happy-dom": "^21.0.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}

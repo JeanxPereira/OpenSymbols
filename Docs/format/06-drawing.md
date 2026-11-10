@@ -23,6 +23,8 @@ holds them. Choices that are the model's and not Apple's are sealed `[INF]`.
 | `rotatesClockwise?` | boolean | `.defaults`: `-sfsymbols-rotates-clockwise` | 5.2 |
 | `shapeGroups` | `{layer, fillAction?, indices}[]` | `.shapeGroupLayer-N` classes, whole tree | 7 |
 | `drawAttachmentData` | `{a, b, anchorX, anchorY}[]` | `data-d` on the node with id `da` | 6.3 |
+| `rotationAnchor?` | `[x, y]`, path space | the `<circle id="ra">` marker | 9.2 |
+| `metricCenter?` | `[x, y]`, path space | the glyph metrics (TLV 1018) | 9.3 |
 
 ### 1.2 `Layer`
 
@@ -468,10 +470,12 @@ subpaths are the natural reading; not established.
 A number "parses" only if the whole token is a number; a numeric prefix followed by other
 characters is not a number.
 
-## 9. Glyph metrics and what is not yet specified
+## 9. Glyph metrics and the animation pivots
 
-The rotation anchor and the metric centre are outside this decoder's scope. What is known
-about where they live, for the work that will need them. Glyph metrics are specified:
+The glyph metrics, and the two points every effect turns and scales about
+([07](07-effects.md) §2.5): the rotation anchor and the metric centre. Both points are
+stored in **path space** (the coordinates of the layers' `path`, before `transform`),
+where an effect's per-layer transform acts.
 
 ### 9.1 Glyph metrics
 
@@ -504,17 +508,83 @@ symmetric glyphs. `[OBS]` The unnamed words.
 
 ### 9.2 Rotation anchor
 
-`[CAR]` A `circle` with id `ra` (atom 64) and `cx`, `cy` but **no `r`** — e.g. on
-`apple.intelligence`, as a child of `svg`, in viewBox units. `[BIN] CoreUI 26A5416b`
-`-[CUINamedVectorGlyph rotationAnchor]` reads it (`_getAnchor:@"ra"`). `[INF]` A marker
-outside `<g id="s">` is in viewBox units and maps into path space through the inverse of
-`transform`; one inside `<g id="s">` is already in path space.
+**What Apple reads.** `[BIN] CoreUI 1010 / 26A5416b` `-[CUINamedVectorGlyph rotationAnchor]`
+(block 0x18B4A297C) calls `_getAnchor:@"ra" inRendition:` (0x18B4A2428; the CFString at
+0x1E8982350 is `"ra"`), which looks the anchor up in the rendition's SVG document; with it
+present it returns its point, without it it falls back to `_getMetricCenterInRendition:`
+(§9.3). The three masters are interpolated (`_interpolatedAnchorWithWeight:…`). `[BIN]
+RenderBox 8.0.84 / 26A5416b` stores the result as the glyph's `layer-rotation` pivot
+(`glyph[+0x68]`, constructor 0x1A781FAF8–0x1A781FB68, y replaced by `alignmentHeight − y`),
+the same point for every layer.
+
+**In the document.** `[CAR]` A `circle` with id `ra` (atom 64) carrying `cx` and `cy` but
+**no `r`**: a marker, not a shape (§3.1). On `apple.intelligence` it is a child of `svg`.
+
+**The model** — `Drawing.rotationAnchor?: [x, y]`, path space:
+
+1. `[INF]` Find the first node, depth-first pre-order from the root, that is a `circle` with
+   id `ra`, no `r`, and both `cx` and `cy` parsing as numbers. None → unset.
+2. Whether it lies **inside** `<g id="s">` (a descendant of the transform group of §2.2)
+   decides its frame:
+   - inside: `(cx, cy)` is already in path space;
+   - outside (the observed case): `(X, Y) = (cx, cy)` is in viewBox units and maps into path
+     space through the inverse of `transform = (a b c d e f)`:
+
+     ```
+     det = a·d − b·c
+     x   = ( d·(X − e) − c·(Y − f)) / det
+     y   = (−b·(X − e) + a·(Y − f)) / det
+     ```
+
+     A singular transform (`det = 0` or not finite) leaves the anchor unset.
+3. `[INF]` No y flip: the marker is read in SVG coordinates (y down, like the viewBox and
+   path space); CoreUI's y-up point and RenderBox's `alignmentHeight − y` cancel out.
+4. Per master: each master's document carries its own marker; a consumer interpolating
+   masters interpolates the anchor like any other coordinate `[INF]` (CoreUI does,
+   above).
+5. Unset → consumers use the metric centre (§9.3), as CoreUI does.
+
+Worked example `[INF]`: `transform = (0.01 0 0 0.01 −1 18)`, marker `cx = 10, cy = 11` under
+`svg` → path `((10 + 1)/0.01, (11 − 18)/0.01) = (1100, −700)`.
 
 ### 9.3 Metric centre
 
-`[BIN] CoreUI 26A5416b` `-[CUINamedVectorGlyph metricCenter]` falls back to
-`_getMetricCenterInRendition:`, a formula over the glyph metrics. `[INF]` As read: `x = (left
-+ width + right) / 2 − left`, the middle of the advance box; `y = capHeight / 2 +
-baseline`, halfway up the cap height, y measured up from the viewBox's bottom edge; then
-mapped into path space through the inverse of `transform`. `[OBS]` The frame of `y` is
-inferred from `baselineOffset`'s, not read.
+**What Apple reads.** `[BIN] CoreUI 1010 / 26A5416b` `-[CUINamedVectorGlyph metricCenter]`
+(0x18B4A2634) returns an explicit value × `_requestedPointSizeRatio` when the glyph has one
+`[OBS]` (where that value comes from is not read); otherwise `_getMetricCenterInRendition:`
+(0x18B4A25B8):
+
+```
+x = (d1 + canvasSize.width + d3) · 0.5 − d1          d1, d3: vectorGlyphAlignmentRectInsets (left, right)
+y = vectorGlyphCapLine · 0.5 + vectorGlyphBaseline
+```
+
+`[BIN] RenderBox 8.0.84 / 26A5416b` stores it as the pivot of `scale` and `symbol-rotation`
+(`glyph[+0x58]`, constructor 0x1A781FA60–0x1A781FAF4), y replaced by `alignmentHeight − y`
+and x **mirrored** for a right-to-left glyph `[OBS]` (the mirror's formula).
+
+**The model** — `Drawing.metricCenter?: [x, y]`, path space, from the glyph metrics of §9.1
+and the viewBox `[vx, vy, w, h]`:
+
+```
+x_vb = vx + (leftInset + w + rightInset) / 2 − leftInset      the middle of the advance box
+yUp  = capHeight / 2 + baselineOffset                          halfway up the cap height
+y_vb = vy + h − yUp                                             y measured up from the bottom edge
+(x, y) = transform⁻¹ (x_vb, y_vb)                               as in §9.2
+```
+
+`[INF]` The identifications: `canvasSize.width` is the viewBox width; the insets are §9.1's
+`leftInset` / `rightInset`; the cap line is `capHeight` and the baseline `baselineOffset`,
+both measured **up** from the viewBox's bottom edge (the frame `baselineOffset` is measured
+in, §9.1: `transform.f = h − baselineOffset`). `[OBS]` Both frames are inferred, not
+read: for `x`, that CoreUI's `canvasSize.width` and alignment-rect insets are the viewBox
+width and §9.1's insets, measured from the viewBox's left edge; for `y`, that the cap line
+and baseline are measured up from its bottom edge.
+
+- No 1018 metrics, or a singular `transform` → unset. Consumers then use `[INF]` the centre
+  of the bounding box of every layer's on-curve points.
+- Per master, like the anchor.
+
+Worked example `[INF]`: viewBox `[0 0 20 20]`, `transform = (0.01 0 0 0.01 −1 18)`,
+`leftInset = rightInset = 1`, `capHeight = 14`, `baselineOffset = 2`: `x_vb = (1 + 20 +
+1)/2 − 1 = 10`, `yUp = 7 + 2 = 9`, `y_vb = 20 − 9 = 11`, path `(1100, −700)`.

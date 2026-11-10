@@ -12,6 +12,7 @@ import {
 } from "react";
 import { FORMAT_VERSION, buildSvg, type SymbolData } from "@opensymbols/core";
 import type { IconProps } from "./create-icon.js";
+import { effectsImpl } from "./effects.js";
 import { toChildren, toReact } from "./to-react.js";
 
 export type SymbolIconProps = IconProps & { data: SymbolData };
@@ -41,6 +42,11 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
     layout = "box",
     direction = "auto",
     title,
+    effect,
+    trigger,
+    active,
+    visible,
+    effectRef,
     ...rest
   } = props;
   if (data.v !== FORMAT_VERSION) {
@@ -70,6 +76,23 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
 
   const resolved = direction === "auto" ? detected : direction;
 
+  // Read once per instance, so the hook count never changes under an icon.
+  const [effects] = useState(effectsImpl);
+  const effectProps = effects?.useSymbolEffects({
+    svg: innerRef,
+    data,
+    weight,
+    mode: data.modes.includes(mode) ? mode : "monochrome",
+    appearance,
+    direction: resolved,
+    effect,
+    trigger,
+    hasTrigger: Object.hasOwn(props, "trigger"),
+    active,
+    visible,
+    effectRef,
+  });
+
   const built = useMemo(
     () =>
       buildSvg(data, {
@@ -92,6 +115,11 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
 
   const children = useMemo(() => toChildren(built.root), [built]);
   const extra: Record<string, unknown> = { ...passthrough, ref: setRef };
+  if (effectProps) {
+    for (const [k, v] of Object.entries(effectProps)) {
+      extra[k] = k === "style" && typeof extra.style === "object" && typeof v === "object" ? { ...(extra.style as object), ...(v as object) } : v;
+    }
+  }
   if (built.approximate) {
     extra["data-approximate"] = "true";
     extra["data-approximations"] = built.approximations.join(" ");

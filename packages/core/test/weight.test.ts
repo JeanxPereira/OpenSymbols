@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { interpolate, weightValue, type VariantData, type Weight } from "../src/index.js";
+import { interpolate, metricCenter, weightValue, type VariantData, type Weight } from "../src/index.js";
 
 const master = (n: number) => ({
   args: [n, n],
@@ -81,5 +81,35 @@ describe("interpolate", () => {
   });
   it("throws TypeError without master 4", () => {
     expect(() => interpolate(variant({ 1: master(0), 9: master(40) }), 4)).toThrow(TypeError);
+  });
+});
+
+describe("metricCenter (Docs/format/06 section 9.3)", () => {
+  const m = { referencePointSize: 13, baselineOffset: 2, capHeight: 14, leftInset: 1, rightInset: 1 };
+  it("is the worked example", () => {
+    const c = metricCenter([0, 0, 20, 20], [0.01, 0, 0, 0.01, -1, 18], m)!;
+    expect(c[0]).toBeCloseTo(1100, 6);
+    expect(c[1]).toBeCloseTo(-700, 6);
+  });
+  it("is undefined for a singular transform", () => {
+    expect(metricCenter([0, 0, 20, 20], [0, 0, 0, 0, 1, 1], m)).toBeUndefined();
+  });
+});
+
+describe("interpolate rotation anchor and metric centre", () => {
+  const withPoints = (n: number) => ({ ...master(n), rotationAnchor: [n, 2 * n] as [number, number], metricCenter: [3 * n, 4 * n] as [number, number] });
+  it("interpolates them like the viewBox", () => {
+    const v = variant({ 1: withPoints(0), 4: withPoints(10), 9: withPoints(40) });
+    const r = interpolate(v, 9);
+    expect(r.rotationAnchor).toEqual([40, 80]);
+    expect(r.metricCenter).toEqual([120, 160]);
+    const mid = interpolate(v, 6.5);
+    expect(mid.rotationAnchor![0]).toBeCloseTo(25, 6);
+  });
+  it("is undefined when a used master lacks them, and absent keys are not written", () => {
+    const v = variant({ 1: master(0), 4: withPoints(10), 9: withPoints(40) });
+    expect(interpolate(v, 1).rotationAnchor).toBeUndefined();
+    expect(interpolate(v, 4).rotationAnchor).toEqual([10, 20]);
+    expect("rotationAnchor" in interpolate(full, 4)).toBe(false);
   });
 });

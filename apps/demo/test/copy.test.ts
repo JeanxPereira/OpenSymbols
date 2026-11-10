@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import type { LayerData, SymbolData } from "@opensymbols/core";
-import { deepImportLine, importLine, jsxFor, svgFor } from "../src/copy.js";
+import { deepImportLine, importLine, jsxFor, replaceImportLines, replaceJsxFor, svgFor } from "../src/copy.js";
+import { buildEffect } from "../src/effects.js";
 import { REASONS } from "../src/reasons.js";
 
 const st = { paint: { kind: "tint" as const }, opacity: 1, clearBehind: false };
@@ -64,6 +65,41 @@ describe("copy", () => {
     );
   });
 
+  it("jsxFor writes the effect with only its non-default options and the companion prop", () => {
+    // discrete: a trigger placeholder
+    expect(jsxFor("Bell", { effect: { kind: "bounce" } })).toBe('<Bell effect={{ kind: "bounce" }} trigger={count /* each change plays it */} />');
+    // defaults left out: speed 1, byLayer true, false flags, repeat once
+    expect(
+      jsxFor("Bell", { effect: { kind: "draw", speed: 1, byLayer: true, reversed: true, drawIndividually: false, repeat: undefined } as never }),
+    ).toBe('<Bell effect={{ kind: "draw", reversed: true }} trigger={count /* each change plays it */} />');
+    // continuous: `active`, and `repeat` is not written (active always runs continuously)
+    expect(jsxFor("Wifi", { size: 48, effect: { kind: "pulse", byLayer: false, speed: 0.5, repeat: "continuous" } })).toBe(
+      '<Wifi size={48} effect={{ kind: "pulse", byLayer: false, speed: 0.5 }} active={active} />',
+    );
+    // transitions: `visible`
+    expect(jsxFor("Wifi", { effect: { kind: "disappear", direction: "down" } })).toBe(
+      '<Wifi effect={{ kind: "disappear", direction: "down" }} visible={visible} />',
+    );
+    expect(jsxFor("Arrow", { effect: { kind: "rotate", rotateDirection: "counterClockwise" } })).toBe(
+      '<Arrow effect={{ kind: "rotate", rotateDirection: "counterClockwise" }} trigger={count /* each change plays it */} />',
+    );
+  });
+
+  it("buildEffect drops Reverse order unless the Draw is reversed (Draw Off only)", () => {
+    expect(buildEffect("draw", { drawReversedOrder: true }, 1, "once")).toEqual({ kind: "draw" });
+    expect(buildEffect("draw", { reversed: true, drawReversedOrder: true }, 1, "once")).toEqual({ kind: "draw", reversed: true, drawReversedOrder: true });
+  });
+
+  it("replaceJsxFor: the Replace snippet with both components, show, style, magic and the icon props", () => {
+    expect(replaceJsxFor("PlayFill", "PauseFill", { size: 32, weight: "bold" }, { style: "upUp", magic: true, speed: 2 })).toBe(
+      '<Replace from={PlayFill} to={PauseFill} show={playing ? "to" : "from"} style="upUp" magic speed={2} size={32} weight="bold" />',
+    );
+    expect(replaceJsxFor("A", "B", {}, { style: "downUp", magic: false, speed: 1 })).toBe(
+      '<Replace from={A} to={B} show={playing ? "to" : "from"} style="downUp" />',
+    );
+    expect(replaceImportLines("my-symbols", "A", "B")).toBe('import { A, B } from "my-symbols";\nimport { Replace } from "@opensymbols/animate/react";');
+  });
+
   it("svgFor is a standalone SVG with stable ids", () => {
     const svg = svgFor(fixture, { size: 48, weight: "bold" });
     expect(svg.startsWith("<svg")).toBe(true);
@@ -74,7 +110,7 @@ describe("copy", () => {
   });
 
   it("reason texts match the README table", () => {
-    const readme = readFileSync(new URL("../../../README.md", import.meta.url), "utf8");
+    const readme = readFileSync(new URL("../../../README.md", import.meta.url), "utf8").replace(/\r\n/g, "\n");
     const table = readme.slice(readme.indexOf("| reason |"));
     const end = table.indexOf("\n\n");
     const body = end === -1 ? table : table.slice(0, end);

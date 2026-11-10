@@ -134,6 +134,31 @@ describe("layouts", () => {
   });
 });
 
+describe("per-layer structure", () => {
+  it("wraps each painted layer's path in its own <g data-layer=i> inside the transformed group", () => {
+    const v = variant({ layers: [layer([0, 2]), layer([2, 5])] });
+    const { root } = buildSvg(symbol({ a0d0: v }), ro());
+    const group = root.children.find((c) => c.tag === "g")!;
+    expect(group.attrs.transform).toBeDefined();
+    expect(group.children.map((c) => [c.tag, c.attrs["data-layer"], c.children.length])).toEqual([
+      ["g", 0, 1],
+      ["g", 1, 1],
+    ]);
+    // The wrapper carries nothing but the index: paint and opacity stay on the path.
+    for (const g of group.children) {
+      expect(Object.keys(g.attrs)).toEqual(["data-layer"]);
+      expect(g.children[0]!.tag).toBe("path");
+      expect(g.children[0]!.attrs.fill).toBe("#123456");
+    }
+  });
+  it("keeps the source layer index when a layer before it is not drawn", () => {
+    const st = (o: number) => ({ paint: { kind: "tint" as const }, opacity: o, clearBehind: false });
+    const hidden: LayerData = { ...layer([0, 2]), modes: { monochrome: st(0), hierarchical: st(0), multicolor: st(0), palette: st(0) } };
+    const { root } = buildSvg(symbol({ a0d0: variant({ layers: [hidden, layer([2, 5])] }) }), ro());
+    expect(find(root, "g").filter((g) => g.attrs["data-layer"] !== undefined).map((g) => g.attrs["data-layer"])).toEqual([1]);
+  });
+});
+
 describe("number formatting", () => {
   it("keeps the wifi transform's scale to 6 significant digits (Docs/format/02 section 5.3)", () => {
     const wifi: [number, number, number, number, number, number] = [0.00634765, 0, 0, 0.00634765, -0.901367, 8.58203];
@@ -166,8 +191,11 @@ describe("knockout", () => {
     expect(masks[0]!.attrs.id).toBe("p-k1");
     const g = find(root, "g").find((n) => n.attrs.mask === "url(#p-k1)")!;
     expect(g.children).toHaveLength(1);
-    expect(g.children[0]!.attrs.d).toBe("M0 0L1 1");
-    expect(g.children[0]!.attrs.fill).toBe("#123456");
+    // Each painted layer sits in its own `<g data-layer>` (the effects driver's handle).
+    expect(g.children[0]!.tag).toBe("g");
+    expect(g.children[0]!.attrs["data-layer"]).toBe(0);
+    expect(g.children[0]!.children[0]!.attrs.d).toBe("M0 0L1 1");
+    expect(g.children[0]!.children[0]!.attrs.fill).toBe("#123456");
     // the knockout path is in the mask, same d as the layer, and nowhere else
     const kp = find(masks[0]!, "path")[0]!;
     expect(kp.attrs.d).toBe("M0 0L2 2Z");
@@ -188,7 +216,12 @@ describe("knockout", () => {
     expect(outer.attrs.mask).toBe("url(#p-k3)");
     expect(outer.children).toHaveLength(2);
     expect(outer.children[0]!.attrs.mask).toBe("url(#p-k1)");
-    expect(outer.children[1]!.tag).toBe("path");
+    expect(outer.children[1]!.tag).toBe("g");
+    expect(outer.children[1]!.attrs["data-layer"]).toBe(2);
+    expect(outer.children[1]!.children.map((c) => c.tag)).toEqual(["path"]);
+    // Each mask's knockout path names its layer, so an animated layer's mask copy can follow it.
+    const masks = find(root, "mask");
+    expect(masks.map((m) => find(m, "path")[0]!.attrs["data-layer"])).toEqual([1, 3]);
   });
   it("mask lives in path space: inverse of the transform applied to the viewBox", () => {
     const v = variant({ masters: { 4: master([0, 0, 10, 5], 17, [2, 0, 0, 2, 10, 10]) } });

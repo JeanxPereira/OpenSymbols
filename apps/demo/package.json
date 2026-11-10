@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@opensymbols/animate": "workspace:*",
     "@opensymbols/core": "workspace:*",
     "@opensymbols/react": "workspace:*",
     "@tanstack/react-virtual": "^3.14.26",

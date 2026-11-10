@@ -319,6 +319,112 @@ select {
   overflow-wrap: anywhere;
 }
 
+/* Animation panel */
+
+.animation {
+  display: grid;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.section-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.controls input[type="checkbox"] {
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.field-input {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.field-input:focus-visible {
+  border-color: var(--accent);
+}
+
+.replace-results {
+  display: grid;
+  margin: 0;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  list-style: none;
+}
+
+.replace-result {
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  font-size: 12px;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.replace-result:hover,
+.replace-result[aria-pressed="true"] {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.transport {
+  display: flex;
+  gap: 6px;
+}
+
+.button.button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.button.button-primary:hover:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(1.08);
+}
+
+.button.button-primary:disabled {
+  border-color: var(--line);
+  background: var(--surface);
+}
+
+.timeline {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 10px;
+}
+
+.timeline input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--accent);
+}
+
+.timeline output {
+  grid-column: 2;
+}
+
+.panel-note {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
 .copy {
   display: grid;
   gap: 8px;

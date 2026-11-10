@@ -158,6 +158,113 @@ Two fields of `index.json` say how far to trust the output:
 Generated packages contain Apple's symbol drawings: keep them out of public repositories and
 registries.
 
+## Effects
+
+`@opensymbols/animate` adds symbol effects in the vocabulary of SwiftUI's `symbolEffect`. It
+is a separate package: an app that only renders icons never bundles it (a test builds such an
+app and checks). Pack it like the other runtime packages
+(`cd packages/animate && pnpm pack --pack-destination ../../out`) and register it once, in
+client code, before the animated icons mount:
+
+```tsx
+import "@opensymbols/animate/react";
+```
+
+The import installs the effects driver into `@opensymbols/react`. Until it has run, the effect
+props below are ignored and never reach the DOM. An icon reads the registration when it mounts,
+so icons mounted earlier stay static: import it in your entry module, next to `createRoot`.
+The entry is marked `"use client"`. With React Server Components, import it from a client
+component; icons rendered by server components stay static markup, and effects run in client
+components only. The engine itself (`@opensymbols/animate`, no `/react`) has no React and can be
+imported anywhere.
+
+Registering adds a small cost to every icon mounted afterwards, even one without effect props:
+each runs the effects hook (a few refs and effects, idle until an effect plays).
+
+The public API of `@opensymbols/animate/react` is the registration (the import itself),
+`<Replace>`, and the types `EffectProps`, `SymbolHandle` and `ReplaceProps`. Its other exports
+(`renderFrame`, `drawingOf`, `toSpec`, `DrawingKey`) are internal, for the demo's timeline, and
+may change without notice.
+
+The props, on every icon:
+
+| prop | |
+|---|---|
+| `effect` | the effect, `{ kind, ...options }`: what `trigger`, `active` and `effectRef.play` play; `visible` uses its options when it is `appear` or `disappear` |
+| `trigger` | discrete: every change of this value plays `effect` once (not the first render) |
+| `active` | indefinite: while true, `effect` runs continuously; when it turns false, the current cycle finishes, then the icon rests |
+| `visible` | transition: `false` plays Disappear and keeps the icon mounted but hidden (`visibility: hidden`, `aria-hidden`); `true` plays Appear |
+| `effectRef` | a ref that receives `{ play(effect), stop() }`; `ref` stays the `<svg>` element |
+
+```tsx
+import { useRef } from "react";
+import type { SymbolHandle } from "@opensymbols/animate/react";
+
+<Bell effect={{ kind: "bounce", direction: "down" }} trigger={count} />
+<Wifi effect={{ kind: "pulse" }} active={searching} />
+<Wifi effect={{ kind: "appear", byLayer: false }} visible={online} />
+
+const bell = useRef<SymbolHandle>(null);
+<Bell effectRef={bell} />
+bell.current?.play({ kind: "wiggle", repeat: "continuous" }); // later: bell.current?.stop()
+```
+
+Every effect takes `speed` (higher is faster, default 1) and `byLayer` (default `true`: the
+motion groups move one after another; `false` moves the symbol as one). The other options, by
+kind:
+
+| `kind` | options | continuous form |
+|---|---|---|
+| `appear`, `disappear` | `direction`: `"up"` or `"down"` | no |
+| `bounce` | `direction`: `"up"` or `"down"` | yes |
+| `pulse` | | yes |
+| `breathe` | `breathePlain`: scale only, no pulse in opacity | yes |
+| `wiggle` | | yes |
+| `rotate` | `rotateDirection`: `"clockwise"` or `"counterClockwise"` (default: the symbol's own) | yes |
+| `scale` | `direction`: `"up"` or `"down"` | no |
+| `draw` | `reversed` (Draw Off), `drawIndividually` (each layer in turn), `drawReversedOrder` (Draw Off only: retract, groups in reverse order) | no |
+| `variableColor` | `variableValue`: 0 to 1 | static only, see below |
+
+A kind with a continuous form also takes `repeat: "once" | "continuous"`, which only
+`effectRef.play` reads: `active` always runs continuously and `trigger` always plays once. The
+types are a union on `kind`, so an option on a kind that does not take it is a type error.
+
+`Replace` swaps one symbol for another:
+
+```tsx
+import { Replace } from "@opensymbols/animate/react";
+import PlayFill from "opensymbols-local/PlayFill";
+import PauseFill from "opensymbols-local/PauseFill";
+
+<Replace from={PlayFill} to={PauseFill} show={playing ? "to" : "from"} style="downUp" magic size={32} />
+```
+
+Both icons stay mounted, stacked; a change of `show` plays the Replace from the shown one to the
+other. `style` is `"downUp"` (default), `"upUp"`, `"offUp"` or `"plain"`; `magic` animates a
+slash or badge difference in place (Magic Replace) and falls back to the plain Replace when
+the two symbols differ otherwise. It also takes `speed`, `byLayer` and the icon props, which go
+to both icons.
+
+Under `prefers-reduced-motion: reduce` (read when an effect starts) every effect jumps to its
+end state: a once effect shows its last frame, a continuous one stays at rest, Disappear hides
+at once and Replace swaps at once.
+
+What is approximate or missing:
+
+- Variable Color's animated forms (iterative, cumulative, reversing) are not decoded yet and
+  are not available. The `variableColor` kind holds the static value, the same look as the
+  `variableValue` prop.
+- Stopping is inferred: `stop()` and `active` turning false let each motion group finish its
+  current cycle on its own delayed clock, then that group rests. Bounce, whose loop does not
+  end at rest, plays its outro from the cycle end to settle; when Apple starts that outro is
+  not known. `stop()` does nothing to a
+  once effect, which runs out as it is.
+- `active` on a kind without a loop (`draw`, `appear`, `disappear`, `scale`, `variableColor`)
+  plays it once, and `active` turning false does nothing to it. `scale` scales once and holds
+  its end state.
+- Timing, curves and stagger come from the format notes in `Docs/format/07`; where those mark a
+  value as inferred, so is the motion.
+
 ## Preview your package
 
 `opensymbols demo` serves a small browser app that lists the symbols of a generated package

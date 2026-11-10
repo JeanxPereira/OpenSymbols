@@ -64,6 +64,43 @@ test('12 categories with counts and search terms; the feature mix is present', (
   }
 });
 
+test('the format carries what effects need: anchors, motion groups, stroke keyframes', () => {
+  const chunk = [...read(out, 'chunks', '0.json'), ...read(out, 'chunks', '1.json')];
+  const variants = chunk.flatMap((s) => Object.values(s.variants));
+  const anchored = chunk.filter((s) => Object.values(s.variants).every((v) => v.masters[4].rotationAnchor));
+  assert.ok(anchored.length > 60 && anchored.length < 120, `~30% anchored, got ${anchored.length}`);
+  for (const v of variants) {
+    for (const m of Object.values(v.masters)) {
+      assert.equal(m.metricCenter.length, 2);
+      assert.ok(m.metricCenter.every(Number.isFinite));
+      if (m.rotationAnchor) assert.ok(m.rotationAnchor.every(Number.isFinite));
+    }
+    for (const l of v.layers) assert.ok(l.motionGroup >= 1 && l.motionGroup <= 4);
+  }
+  const groups = new Set(variants.flatMap((v) => v.layers.map((l) => l.motionGroup)));
+  assert.deepEqual([...groups].sort(), [1, 2, 3, 4]);
+  const reverses = chunk.filter((s) => Object.values(s.variants).every((v) => v.anim.drawReversesMotionGroups));
+  assert.ok(reverses.length > 100 && reverses.length < 200, `about half reverse, got ${reverses.length}`);
+  // 08 section 1 / 06 section 6.1: records {flags, progress, d0, d1}, a progress-0 and a progress-1 one,
+  // d = subpath + fraction with the subpath inside the layer.
+  let keyframed = 0;
+  for (const v of variants) {
+    for (const l of v.layers) {
+      const kf = l.anim?.strokeKeyframes ?? [];
+      if (kf.length === 0) continue;
+      keyframed++;
+      const subpaths = v.ops.slice(l.cmd[0], l.cmd[1]).split('M').length - 1;
+      assert.ok(kf.some((k) => k.progress === 0) && kf.some((k) => k.progress === 1));
+      for (const k of kf) {
+        assert.ok(Number.isInteger(k.flags) && k.flags >= 0);
+        assert.ok(k.progress >= 0 && k.progress <= 1);
+        for (const d of [k.d0, k.d1]) assert.ok(d >= 0 && Math.floor(d) < subpaths, `d ${d} of ${subpaths}`);
+      }
+    }
+  }
+  assert.ok(keyframed > 100, `stroke keyframes on the bars and rings, got ${keyframed}`);
+});
+
 test('the modules render through react-dom/server', async () => {
   const require = createRequire(join(root, 'packages', 'cli', 'package.json'));
   const { createElement } = require('react');

@@ -1,5 +1,6 @@
-import { forwardRef, type ForwardRefExoticComponent, type RefAttributes, type SVGProps } from "react";
+import { forwardRef, type ForwardRefExoticComponent, type Ref, type RefAttributes, type SVGProps } from "react";
 import { FORMAT_VERSION, type RenderingMode, type SymbolData, type Weight } from "@opensymbols/core";
+import type { EffectProps, SymbolHandle } from "./effects.js";
 import { SymbolIcon } from "./symbol-icon.js";
 
 export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "ref" | "color" | "direction"> {
@@ -26,6 +27,20 @@ export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "ref" | "color"
   direction?: "ltr" | "rtl" | "auto";
   /** Accessible name. Without it the icon is decorative (`aria-hidden`). */
   title?: string;
+  /*
+   * Effects (spec section 9.3). Inert until `import "@opensymbols/animate/react"` has run once in
+   * the app: without it they are ignored and never reach the DOM.
+   */
+  /** The effect `trigger`, `active` and `effectRef.play` use; `visible` plays its appear/disappear options. */
+  effect?: EffectProps;
+  /** Discrete: each change of this value plays `effect` once (not on mount). */
+  trigger?: unknown;
+  /** Indefinite: plays `effect` continuously while true; when it turns false the cycle finishes, then rests. */
+  active?: boolean;
+  /** Transition: false plays Disappear and keeps the icon mounted but hidden; true plays Appear. */
+  visible?: boolean;
+  /** Receives `{ play(effect), stop() }`. (`ref` stays the `<svg>` element.) */
+  effectRef?: Ref<SymbolHandle>;
 }
 
 export type OpenSymbolIcon = ForwardRefExoticComponent<IconProps & RefAttributes<SVGSVGElement>> & {

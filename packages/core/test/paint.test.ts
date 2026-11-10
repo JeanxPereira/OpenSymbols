@@ -114,20 +114,20 @@ describe("resolveLayer", () => {
   describe("variable value (color mode)", () => {
     const l = layer("primary", {}, { variableThreshold: 0.5 });
     it("hard cut", () => {
-      expect(resolveLayer(l, opts({ variableValue: 0.49 })).opacity).toBe(0.25);
+      expect(resolveLayer(l, opts({ variableValue: 0.49 })).opacity).toBe(Math.fround(0.3));
       expect(resolveLayer(l, opts({ variableValue: 0.5 })).opacity).toBe(1);
     });
     it("continuous ramps over threshold +- 0.06", () => {
       const c = (v: number) => resolveLayer(l, opts({ variableValue: v, vcContinuous: true })).opacity;
-      expect(c(0.5)).toBeCloseTo(0.625, 10);
-      expect(c(0.44)).toBeCloseTo(0.25, 10);
-      expect(c(0.3)).toBeCloseTo(0.25, 10);
+      expect(c(0.5)).toBeCloseTo(0.65, 7);
+      expect(c(0.44)).toBeCloseTo(0.3, 7);
+      expect(c(0.3)).toBeCloseTo(0.3, 7);
       expect(c(0.56)).toBeCloseTo(1, 10);
       expect(c(0.9)).toBeCloseTo(1, 10);
     });
     it("scales the layer's own opacity", () => {
       const h = layer("secondary", {}, { variableThreshold: 0.5 });
-      expect(resolveLayer(h, opts({ mode: "hierarchical", variableValue: 0 })).opacity).toBeCloseTo(0.125, 10);
+      expect(resolveLayer(h, opts({ mode: "hierarchical", variableValue: 0 })).opacity).toBeCloseTo(0.15, 7);
     });
     it("no threshold or no value leaves opacity alone", () => {
       expect(resolveLayer(layer("primary"), opts({ variableValue: 0 })).opacity).toBe(1);

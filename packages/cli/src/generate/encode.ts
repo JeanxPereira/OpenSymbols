@@ -8,6 +8,7 @@ import {
   type RenderMode,
   type SymbolData,
   type VariantData,
+  metricCenter,
 } from "@opensymbols/core";
 import {
   DecodeError,
@@ -207,7 +208,12 @@ function encodeVariant(
         leftInset: round6(metrics.leftInset),
         rightInset: round6(metrics.rightInset),
       };
+      // 06 section 9.3: from this master's own metrics, viewBox and transform.
+      const centre = metricCenter(master.viewBox, master.transform, master.metrics);
+      if (centre !== undefined) master.metricCenter = [round3(centre[0]), round3(centre[1])];
     }
+    // 06 section 9.2: each master's document carries its own marker (already in path space).
+    if (d.rotationAnchor !== undefined) master.rotationAnchor = [round3(d.rotationAnchor[0]), round3(d.rotationAnchor[1])];
     masters[m] = master;
   }
 

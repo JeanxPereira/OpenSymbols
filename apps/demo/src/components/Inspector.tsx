@@ -1,8 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { buildSvg, type RenderingMode, type SymbolData, type WeightName } from "@opensymbols/core";
-import { SymbolIcon, type IconProps } from "@opensymbols/react";
+import type { IconProps } from "@opensymbols/react";
 import { symbolAt, type ChunkCache } from "../data/chunks.js";
 import type { DemoIndex } from "../data/index-model.js";
+import {
+  AnimatedPreview,
+  AnimationPanel,
+  DEFAULT_ANIMATION,
+  effectFor,
+  frameModel,
+  IDLE,
+  useReplaceTarget,
+  type AnimationSettings,
+  type Transport,
+} from "./AnimationPanel.js";
 import { ApproximationNotice } from "./ApproximationNotice.js";
 import { Controls, DEFAULT_PALETTE, type InspectorSettings } from "./Controls.js";
 import { CopyButtons } from "./CopyButtons.js";
@@ -51,6 +62,9 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
     direction: "auto",
   }));
   const onChange = useCallback((patch: Partial<InspectorSettings>) => setSettings((s) => ({ ...s, ...patch })), []);
+  const [animation, setAnimation] = useState<AnimationSettings>(DEFAULT_ANIMATION);
+  const onAnimation = useCallback((patch: Partial<AnimationSettings>) => setAnimation((s) => ({ ...s, ...patch })), []);
+  const [transport, setTransport] = useState<Transport>(IDLE);
 
   const pos = useMemo(() => index.symbols.findIndex((s) => s.name === name), [index, name]);
   const sym = index.symbols[pos];
@@ -73,6 +87,7 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
   }, [cache, chunk, version]);
 
   const data = pos >= 0 ? symbolAt(cache, index, pos) : undefined;
+  const target = useReplaceTarget(cache, index, animation.kind === "replace" ? animation.target : undefined, version);
   const failed = chunk !== undefined && cache.error(chunk) !== undefined;
   const resolved = settings.appearance === "theme" ? appearance : settings.appearance;
 
@@ -108,6 +123,17 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
     }).approximations;
   }, [data, settings, resolved, palette, variableValue]);
 
+  const effect = effectFor(animation);
+  const targetSym = animation.kind === "replace" && animation.target !== undefined ? index.symbols.find((s) => s.name === animation.target) : undefined;
+  const replaceCopy = targetSym ? { to: targetSym.component, style: animation.replaceStyle, magic: animation.magic, speed: animation.speed } : undefined;
+  const effectKey = effect ? JSON.stringify(effect) : "";
+  // The timeline's drawing, spec and run length, for the effect as the preview draws it.
+  const model = useMemo(
+    () => (data && effect ? frameModel(data, iconProps, effect) : undefined),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [data, effectKey, iconProps.weight, iconProps.mode, iconProps.appearance, iconProps.direction],
+  );
+
   if (!sym) {
     return (
       <div className="inspector">
@@ -127,7 +153,7 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
 
       <div className="inspector-stage" data-appearance={resolved} aria-busy={!data && !failed ? true : undefined}>
         {data ? (
-          <SymbolIcon data={data} {...iconProps} title={sym.name} />
+          <AnimatedPreview data={data} iconProps={iconProps} title={sym.name} settings={animation} transport={transport} model={model} target={target} />
         ) : failed ? (
           <div className="stage-error">
             <p>The symbol could not be loaded.</p>
@@ -148,6 +174,16 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
         modes={sym.modes}
         variableValue={sym.variableValue}
         textColor={TEXT_COLOR[appearance]}
+      />
+
+      <AnimationPanel
+        index={index}
+        name={sym.name}
+        settings={animation}
+        onChange={onAnimation}
+        transport={transport}
+        onTransport={setTransport}
+        duration={model?.duration}
       />
 
       <dl className="inspector-info">
@@ -171,7 +207,7 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
         <dd>{data ? variantsOf(data).join(", ") || "None" : "…"}</dd>
       </dl>
 
-      <CopyButtons pkg={index.package.name} component={sym.component} data={data} props={iconProps} />
+      <CopyButtons pkg={index.package.name} component={sym.component} data={data} props={iconProps} effect={effect} replace={replaceCopy} />
     </div>
   );
 }
