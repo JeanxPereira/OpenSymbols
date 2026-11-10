@@ -8,7 +8,7 @@ import { drawingOf, renderFrame, Replace, toSpec, type ReplaceProps } from "@ope
 import { symbolAt, type ChunkCache } from "../data/chunks.js";
 import type { DemoIndex } from "../data/index-model.js";
 import { search } from "../data/search.js";
-import { buildEffect, EFFECT_OPTIONS, OPTION_META, PANEL_KINDS, REPEATS, SPEED_DEFAULT, type OptionKey, type OptionValues, type PanelKind } from "../effects.js";
+import { buildEffect, EFFECT_OPTIONS, isStill, OPTION_META, optionApplies, PANEL_KINDS, REPEATS, SPEED_DEFAULT, type OptionKey, type OptionValues, type PanelKind } from "../effects.js";
 
 const INSPECTOR_PRIORITY = 1000;
 const noop = () => {};
@@ -54,6 +54,7 @@ const KIND_LABELS: Record<AnimationSettings["kind"], string> = {
   rotate: "Rotate",
   scale: "Scale",
   draw: "Draw",
+  variableColor: "Variable Color",
   replace: "Replace",
 };
 
@@ -225,10 +226,12 @@ export function AnimationPanel({ index, name, settings, onChange, transport, onT
       .slice(0, RESULTS_MAX);
   }, [index, query, kind, name]);
 
-  const setValue = (key: OptionKey, value: string | boolean) => onChange({ values: { ...settings.values, [key]: value } });
+  const setValue = (key: OptionKey, value: string | boolean | number | undefined) => onChange({ values: { ...settings.values, [key]: value } });
   const reduced = useMemo(prefersReducedMotion, []);
   const canPlay = isEffect || (kind === "replace" && settings.target !== undefined);
   const canStop = isEffect;
+  // Variable Color at a value: a still frame, with no speed or repeat.
+  const still = isEffect && isStill(kind, settings.values);
 
   return (
     <section className="animation" aria-label="Animation">
@@ -257,6 +260,36 @@ export function AnimationPanel({ index, name, settings, onChange, transport, onT
           (EFFECT_OPTIONS[kind] as readonly OptionKey[]).map((key) => {
             const meta = OPTION_META[key];
             const fid = `${id}-${key}`;
+            const applies = optionApplies(kind, key, settings.values);
+            // Reverse order shows disabled outside Draw Off; Variable Color's animated options are hidden at a value.
+            if (!applies && key !== "drawReversedOrder") return null;
+            if (meta.type === "value") {
+              const v = settings.values[key];
+              const set = typeof v === "number";
+              return (
+                <OptionRow key={key} label={meta.label} htmlFor={fid}>
+                  <select id={fid} data-option={key} value={set ? "set" : ""} onChange={(e) => setValue(key, e.target.value === "set" ? meta.initial : undefined)}>
+                    <option value="">{meta.unset}</option>
+                    <option value="set">{meta.set}</option>
+                  </select>
+                  {set && (
+                    <>
+                      <input
+                        type="range"
+                        data-control="effect-value"
+                        aria-label={meta.set}
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={v}
+                        onChange={(e) => setValue(key, Number(e.target.value))}
+                      />
+                      <output className="field-value">{`${Math.round(v * 100)}%`}</output>
+                    </>
+                  )}
+                </OptionRow>
+              );
+            }
             if (meta.type === "choice") {
               return (
                 <OptionRow key={key} label={meta.label} htmlFor={fid}>
@@ -271,11 +304,9 @@ export function AnimationPanel({ index, name, settings, onChange, transport, onT
               );
             }
             const checked = typeof settings.values[key] === "boolean" ? (settings.values[key] as boolean) : meta.default;
-            // Reverse order applies to Draw Off only.
-            const disabled = key === "drawReversedOrder" && settings.values.reversed !== true;
             return (
               <OptionRow key={key} label={meta.label} htmlFor={fid}>
-                <input id={fid} type="checkbox" data-option={key} checked={checked} disabled={disabled} onChange={(e) => setValue(key, e.target.checked)} />
+                <input id={fid} type="checkbox" data-option={key} checked={checked} disabled={!applies} onChange={(e) => setValue(key, e.target.checked)} />
               </OptionRow>
             );
           })}
@@ -339,7 +370,7 @@ export function AnimationPanel({ index, name, settings, onChange, transport, onT
           </>
         )}
 
-        {kind !== "none" && (
+        {kind !== "none" && !still && (
           <>
             <label className="field-label" htmlFor={`${id}-speed`}>
               Speed
@@ -363,7 +394,7 @@ export function AnimationPanel({ index, name, settings, onChange, transport, onT
           </>
         )}
 
-        {isEffect && REPEATS[kind] && (
+        {isEffect && REPEATS[kind] && !still && (
           <>
             <label className="field-label" htmlFor={`${id}-repeat`}>
               Repeat

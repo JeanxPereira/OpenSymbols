@@ -79,8 +79,10 @@ const OPTIONS: Record<string, string[]> = {
   rotate: ["rotateDirection", "byLayer"],
   scale: ["direction", "byLayer"],
   draw: ["reversed", "drawIndividually", "drawReversedOrder", "byLayer"],
+  // `byLayer` changes nothing for Variable Color (no motion groups): not offered
+  variableColor: ["variableValue", "fill", "reversing", "inactive"],
 };
-const REPEATING = ["bounce", "pulse", "breathe", "wiggle", "rotate"];
+const REPEATING = ["bounce", "pulse", "breathe", "wiggle", "rotate", "variableColor"];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -141,7 +143,7 @@ function matrixOf(el: Element): number[] {
 }
 
 describe("animation panel", () => {
-  it("offers every icon effect but animated Variable Color, plus Replace", async () => {
+  it("offers every icon effect, plus Replace", async () => {
     await show("two");
     const kinds = [...control("effect")!.options].map((o) => o.value);
     expect(kinds).toEqual(["none", ...Object.keys(OPTIONS), "replace"]);
@@ -206,6 +208,47 @@ describe("animation panel", () => {
     await act(async () => opt("reversed").click());
     expect(opt("drawReversedOrder").disabled).toBe(true);
     expect(jsx()).not.toContain("drawReversedOrder");
+  });
+
+  it("Variable Color: animated with fill, reversing and inactive, or a still frame at a value", async () => {
+    await show("two");
+    await act(async () => choose(control("effect")!, "variableColor"));
+    const opt = <T extends HTMLElement>(k: string) => container.querySelector<T>('[data-option="' + k + '"]');
+    // animated by default: the form choice, the animated options, speed and repeat; no value slider
+    expect(opt<HTMLSelectElement>("variableValue")!.value).toBe("");
+    expect([...opt<HTMLSelectElement>("variableValue")!.options].map((o) => o.textContent)).toEqual(["Animated", "Value"]);
+    expect([...opt<HTMLSelectElement>("fill")!.options].map((o) => o.textContent)).toEqual(["Cumulative", "Iterative"]);
+    expect([...opt<HTMLSelectElement>("inactive")!.options].map((o) => o.textContent)).toEqual(["Dim", "Hide"]);
+    expect(opt<HTMLInputElement>("reversing")!.checked).toBe(false);
+    expect(control("effect-value")).toBeNull();
+    expect(control("speed")).not.toBeNull();
+    expect(control("repeat")).not.toBeNull();
+    expect(jsx()).toContain('effect={{ kind: "variableColor" }} trigger={');
+
+    await act(async () => choose(opt<HTMLSelectElement>("fill")!, "iterative"));
+    await act(async () => opt<HTMLInputElement>("reversing")!.click());
+    expect(jsx()).toContain('<Two size={128} effect={{ kind: "variableColor", fill: "iterative", reversing: true }} trigger={');
+    await act(async () => choose(opt<HTMLSelectElement>("inactive")!, "hide"));
+    await act(async () => choose(control("repeat")!, "continuous"));
+    expect(jsx()).toContain('effect={{ kind: "variableColor", fill: "iterative", reversing: true, inactive: "hide" }} active={');
+
+    // a value: the slider, and the animated options, speed and repeat are gone, from the panel and the JSX
+    await act(async () => choose(opt<HTMLSelectElement>("variableValue")!, "set"));
+    expect(options()).toEqual(["variableValue"]);
+    expect(control("speed")).toBeNull();
+    expect(control("repeat")).toBeNull();
+    const slider = control("effect-value")!;
+    expect(slider).not.toBeNull();
+    expect(slider.value).toBe("1");
+    await act(async () => setValue(slider, "0.4"));
+    expect(jsx()).toContain('effect={{ kind: "variableColor", variableValue: 0.4 }} active={');
+
+    // back to animated: the options come back with their values
+    await act(async () => choose(opt<HTMLSelectElement>("variableValue")!, ""));
+    expect(control("effect-value")).toBeNull();
+    expect(options()).toEqual(OPTIONS.variableColor);
+    expect(opt<HTMLSelectElement>("fill")!.value).toBe("iterative");
+    expect(jsx()).toContain('effect={{ kind: "variableColor", fill: "iterative", reversing: true, inactive: "hide" }} active={');
   });
 
   it("Replace: picks a second symbol by search, with style and magic, and plays it in the stage", async () => {

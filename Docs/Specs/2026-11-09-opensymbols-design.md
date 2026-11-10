@@ -40,7 +40,8 @@ from one; the generator itself runs anywhere Node runs.
 6. Every symbol effect with its options, behaving keyframe for keyframe like Apple's
    (RenderBox 8.0.84): Appear, Disappear, Bounce, Breathe, Draw On/Off, Pulse, Rotate,
    Scale, Replace, Magic Replace, Wiggle and Variable Color, including Variable Color's
-   animated forms (iterative, cumulative, reversing; animated forms pending, §9.2).
+   animated forms (iterative, cumulative, reversing, with inactive layers dimmed or hidden;
+   §9.2).
 7. A demo page that previews all of the above for any symbol, opens fast and stays
    smooth with the full public catalog.
 8. Animation is opt-in: a project that only draws static icons pays nothing for the
@@ -268,7 +269,8 @@ layer gets at one instant: an extra transform, an alpha factor, the Draw clip ra
 (`strokeStart`, `strokeEnd`), a visibility bit, the attachment scale and per-subpath
 transforms for the Draw riders. `Spec` carries the effect kind, repeat, speed, by-layer,
 direction, reversed, Breathe plain, Replace style and half, Draw individually and
-reversed order, the rendering mode, and the variable value.
+reversed order, the rendering mode, the variable value, and Variable Color's fill,
+reversing and inactive options.
 
 Inside: keyframe tracks per property over RenderBox's 42 timing curves, a plan per
 effect, motion-group stagger, Replace and Magic Replace, the Draw clip with its riders,
@@ -278,14 +280,15 @@ The Draw clip is the expensive part. Symbols are filled outlines, so `stroke-das
 cannot draw them; the clip cuts the outline along each layer's stroke-keyframe progress
 field, recomputed per frame.
 
-### 9.2 Variable Color's timeline: read before it ships
+### 9.2 Variable Color
 
-The static form (a value 0..1 lighting layers by threshold) is fully known. The animated
-forms SwiftUI offers (iterative, cumulative, reversing, with dim-inactive and
-hide-inactive) are **not yet read out of RenderBox**. Decided by the user: their timing
-is decoded first and written into `Docs/` like every other effect; only then does the
-engine implement them. Only Variable Color's animated forms wait on this; the static
-`variableValue` and every other effect proceed in parallel.
+Two forms. The static form: a `variableValue` in 0..1 lights layers by threshold
+(`Docs/format/07-effects.md` §9.2–§9.4). The animated forms, used when `variableValue` is
+absent: cumulative or iterative, reversing or not, inactive layers dimmed or hidden, with
+the intro and outro, the repeat gap and the continuous wave that `vcContinuous` turns on.
+Their timing is specified in 07 §9.5, read out of RenderBox like every other effect, and
+the engine implements it. The layers are ordered by their threshold rank, not by motion
+group, so `byLayer` does not apply.
 
 The engine's internal "Color" kind has no keyframes in RenderBox and is not part of the
 API.
@@ -296,8 +299,8 @@ Modelled on SwiftUI's `symbolEffect`, the vocabulary SF Symbols users already kn
 
 ```tsx
 // indefinite: runs while active
-// (Variable Color's animated forms are pending, P5, §9.2: `variableColor` holds a static value only)
 <Wifi effect={{ kind: "pulse" }} active={isSearching} />
+<Wifi effect={{ kind: "variableColor", fill: "iterative", reversing: true }} active={isSearching} />
 
 // discrete: plays once each time `trigger` changes
 <Bell effect={{ kind: "bounce", direction: "up", byLayer: true }} trigger={count} />
@@ -436,7 +439,8 @@ search and grid/list switch, grid, and an inspector on the right.
 ## 16. Open questions
 
 - The nine-weight scalar table (§8.2).
-- Variable Color's animated timing (§9.2; to be decoded, not open-ended).
+- Variable Color's remaining open points (07 §9.6): the Swift layer's defaults, the outro
+  on removal.
 - The GlyphSize transform (§3).
 - `data-d` on variable-draw symbols: five numbers whose meaning is not yet read; Variable
   Draw is implemented from what is known and this stays flagged.

@@ -12,20 +12,40 @@ import type { EffectKind, LayerState, Matrix, Spec } from "./spec.js";
 export interface Plan {
   /** Once: every track. Looping continuous: the intro over `[0, intro end]` (empty for Pulse, Breathe). */
   tracks: Track[];
-  /** A continuous effect's loop: tracks timed from the start of each repetition. */
-  loop?: { tracks: Track[]; period: number };
+  /**
+   * The effect's loop: tracks timed from the start of each repetition. Without `count` it repeats
+   * for as long as the effect runs (continuous). With a finite `count` each clock plays `count`
+   * cycles, then the outro, then rests (07 §6.2 step 5; Variable Color once, 07 §9.5). `period` is
+   * the cycle in effect seconds; `gap`, a repeat gap in wall-clock seconds, holds the cycle's last
+   * values after each cycle, so the repetition lasts `period + speed · gap` effect seconds
+   * (RenderBox's `D + speed · gap`, 07 §6.2 step 5). Absent: no gap.
+   */
+  loop?: { tracks: Track[]; period: number; gap?: number; count?: number };
   /**
    * A looping effect's outro (07 §6.2 phase 2): tracks timed from the end of a group's last cycle,
    * played when the effect is stopped (07 §6.3). Absent: the group rests at its cycle end.
    */
   outro?: { tracks: Track[] };
-  /** Per compacted group, a clock delay (07 §4.6); empty or absent when none. */
+  /** Per clock (see `clock`), a clock delay (07 §4.6); empty or absent when none. */
   groupDelay?: number[];
+  /**
+   * Which clock a layer runs on. `"group"` (the default): the compacted motion group when by layer,
+   * else one clock; the delay shifts the whole clock, intro included (07 §4.6, §6.2 step 1, flags 6
+   * and 16). `"rank"`: clock `max(rank, 0)`, the layer's threshold rank, whatever `byLayer` says;
+   * every layer plays the intro on the undelayed clock, then holds the intro's end until its delay
+   * has elapsed after the intro's end (07 §6.2 step 4, flag 6 without 16; Variable Color, 07 §9.5).
+   */
+  clock?: "group" | "rank";
   /** A whole-clock warp over `[0, timeSpan]` on `timeCurve` (Draw `.individually`, 07 §7.8). */
   timeSpan?: number;
   timeCurve?: number;
   /** pulse-alpha's floor for a layer; 07 §7.2 default `0.30000001192092896`. */
   pulseFloor?: (layer: AnimLayer) => number;
+  /**
+   * The inactive alpha `a`, the target of `variable-alpha-fade` (07 §2.3 property 10, §9.5);
+   * float32 `0.30000001192092896` by default.
+   */
+  inactiveAlpha?: (layer: AnimLayer) => number;
   /** The upper clamp of a layer's alpha; 1 by default (07 §2.7). */
   alphaCap?: (layer: AnimLayer) => number;
   /**
@@ -77,7 +97,10 @@ interface Built {
   plan: Plan;
   /** Latest track end of `plan.tracks`. */
   end: number;
+  /** The number of clocks (`Plan.clock`): compacted groups, or threshold ranks + 1. */
   groups: number;
+  /** Rank clocks no layer runs on: they rest at once when stopped. */
+  idle?: boolean[];
 }
 
 let cache = new WeakMap<AnimDrawing, Map<string, Built>>();
@@ -102,7 +125,11 @@ function build(d: AnimDrawing, spec: Spec): Built {
 function wrap(plan: Plan, d: AnimDrawing, spec: Spec): Built {
   let end = 0;
   for (const t of plan.tracks) end = Math.max(end, trackEnd(t));
-  return { plan, end, groups: spec.byLayer ? Math.max(d.groupCount, 1) : 1 };
+  if (plan.clock !== "rank") return { plan, end, groups: spec.byLayer ? Math.max(d.groupCount, 1) : 1 };
+  const groups = d.rankCount + 1;
+  const idle = Array.from({ length: groups }, () => true);
+  for (const l of d.layers) idle[Math.max(l.rank, 0)] = false;
+  return { plan, end, groups, idle };
 }
 
 /** Internal: a non-looping plan's span in effect seconds, the latest track end or its `total` (0 when neither). */
@@ -118,8 +145,34 @@ export function checkSpeed(speed: number): void {
   if (!(Number.isFinite(speed) && speed > 0)) throw new RangeError(`speed must be finite and > 0, got ${speed}`);
 }
 
-const looping = (p: Plan): p is Plan & { loop: { tracks: Track[]; period: number } } =>
-  p.loop !== undefined && Number.isFinite(p.loop.period) && p.loop.period > 0;
+type Loop = NonNullable<Plan["loop"]>;
+
+/** The plan has a loop with a usable period, counted or not. */
+const cyclic = (p: Plan): p is Plan & { loop: Loop } => p.loop !== undefined && Number.isFinite(p.loop.period) && p.loop.period > 0;
+
+/** A finite repeat count (`Plan.loop.count`), else undefined: the loop runs for as long as the effect. */
+const countOf = (loop: Loop): number | undefined => (loop.count !== undefined && Number.isFinite(loop.count) ? Math.max(loop.count, 0) : undefined);
+
+/**
+ * One repetition of the loop in effect seconds at `speed`: the cycle, then the repeat gap, which
+ * is wall-clock and so lasts `gap · speed` effect seconds (07 §6.2 step 5).
+ */
+const periodAt = (loop: Loop, speed: number): number =>
+  loop.period + (loop.gap !== undefined && Number.isFinite(loop.gap) && loop.gap > 0 ? loop.gap * speed : 0);
+
+/** A loop without a finite count: a looping continuous effect (07 §6.3). */
+const looping = (p: Plan): p is Plan & { loop: Loop } => cyclic(p) && countOf(p.loop) === undefined;
+
+/** The clock a layer runs on (`Plan.clock`). */
+const clockOf = (plan: Plan, layer: AnimLayer, spec: Spec): number =>
+  plan.clock === "rank" ? Math.max(layer.rank, 0) : spec.byLayer ? layer.group : 0;
+
+/** The latest end of the outro's tracks. */
+function outroSpan(plan: Plan): number {
+  let len = 0;
+  for (const tr of plan.outro?.tracks ?? []) len = Math.max(len, trackEnd(tr));
+  return len;
+}
 
 /** The largest delay among the groups that exist. */
 function maxDelay(b: Built): number {
@@ -130,15 +183,22 @@ function maxDelay(b: Built): number {
 }
 
 /**
- * One cycle, in seconds (07 §6.3): the loop period for a looping continuous effect, else the latest
- * track end or the plan's `total` if longer (1.0 when neither, so a frame schedule stays sane),
- * divided by speed.
+ * One cycle, in seconds (07 §6.3): the loop period (with its gap) for a looping continuous effect;
+ * for a counted loop the whole run (intro, the largest delay, `count` periods with their gaps, the
+ * outro); else the latest track end or the plan's `total` if longer (1.0 when neither, so a frame
+ * schedule stays sane); divided by speed. A loop's gap is wall-clock, so it is not divided.
  */
 export function duration(d: AnimDrawing, spec: Spec): number {
   const b = build(d, spec);
+  if (cyclic(b.plan)) {
+    const count = countOf(b.plan.loop);
+    // A counted loop runs out: intro, the latest clock's delay, its cycles, the outro.
+    const period = periodAt(b.plan.loop, spec.speed);
+    if (count !== undefined) return (b.end + maxDelay(b) + count * period + outroSpan(b.plan)) / spec.speed;
+    return period / spec.speed;
+  }
   const span = planSpan(b.plan);
-  const base = looping(b.plan) ? b.plan.loop.period : span > 0 ? span : 1;
-  return base / spec.speed;
+  return (span > 0 ? span : 1) / spec.speed;
 }
 
 /**
@@ -150,13 +210,29 @@ export function loopStart(d: AnimDrawing, spec: Spec): number {
   return looping(b.plan) ? (b.end + maxDelay(b)) / spec.speed : 0;
 }
 
-/** Per compacted group, in effect seconds: when its current cycle ends, and whether its clock had started. */
-function groupCycleEnds(b: Built, te: number): { end: number; started: boolean }[] {
-  const period = b.plan.loop!.period;
+/** Per clock, in effect seconds: when its current cycle ends, and whether its clock had started. */
+function groupCycleEnds(b: Built, te: number, speed: number): { end: number; started: boolean }[] {
+  const period = periodAt(b.plan.loop!, speed);
   const gd = b.plan.groupDelay ?? [];
   const out: { end: number; started: boolean }[] = [];
   for (let g = 0; g < b.groups; g++) {
     const delay = gd[g] ?? 0;
+    if (b.plan.clock === "rank") {
+      if (b.idle?.[g]) {
+        out.push({ end: te, started: false });
+        continue;
+      }
+      // The delay runs after the intro: a clock still waiting for its first cycle ends at once,
+      // and plays the outro, since the intro has moved it.
+      const u = te - b.end - delay;
+      let end: number;
+      if (te <= 0) end = te;
+      else if (te <= b.end) end = b.end;
+      else if (u <= 0) end = te;
+      else end = b.end + delay + Math.ceil(u / period) * period;
+      out.push({ end, started: te > 0 });
+      continue;
+    }
     const lt = te - delay;
     let end: number;
     if (lt <= 0) end = te;
@@ -178,7 +254,7 @@ export function cycleEnds(d: AnimDrawing, spec: Spec, t: number): number[] | und
   if (!Number.isFinite(t)) throw new RangeError(`t must be finite, got ${t}`);
   const b = build(d, spec);
   if (!looping(b.plan)) return undefined;
-  return groupCycleEnds(b, Math.max(t, 0) * spec.speed).map((g) => g.end / spec.speed);
+  return groupCycleEnds(b, Math.max(t, 0) * spec.speed, spec.speed).map((g) => g.end / spec.speed);
 }
 
 /** Internal: a looping effect stopped at some instant (`stopAt`), for `sampleStopped`. */
@@ -200,9 +276,8 @@ export function stopAt(d: AnimDrawing, spec: Spec, t: number): Stop | undefined 
   const b = build(d, spec);
   if (!looping(b.plan)) return undefined;
   const te = Math.max(t, 0) * spec.speed;
-  const groups = groupCycleEnds(b, te);
-  let outroLen = 0;
-  for (const tr of b.plan.outro?.tracks ?? []) outroLen = Math.max(outroLen, trackEnd(tr));
+  const groups = groupCycleEnds(b, te, spec.speed);
+  const outroLen = outroSpan(b.plan);
   let end = te;
   for (const g of groups) end = Math.max(end, g.end + (g.started ? outroLen : 0));
   return { groups, end: end / spec.speed };
@@ -219,6 +294,8 @@ export function sampleStopped(d: AnimDrawing, spec: Spec, stop: Stop, t: number)
 /** Per-layer accumulator of the properties of 07 §2.3. */
 interface Acc {
   alpha: number;
+  /** The variable-alpha family's value (07 §2.3 properties 8–10, §9.5); multiplies `alpha`. */
+  vAlpha: number;
   hidden: boolean;
   scale: number;
   badgeScale: number;
@@ -235,6 +312,7 @@ interface Acc {
 
 const fresh = (): Acc => ({
   alpha: 1,
+  vAlpha: 1,
   hidden: false,
   scale: 1,
   badgeScale: 1,
@@ -250,6 +328,8 @@ const fresh = (): Acc => ({
 
 /** 07 §7.2: Pulse's default floor, float32 `0.30000001192092896`. */
 const PULSE_FLOOR = Math.fround(0.3);
+/** 07 §2.3 property 10, §9.5: the fade's default target, float32 `0.30000001192092896`. */
+const INACTIVE_ALPHA = Math.fround(0.3);
 
 function applyTrack(acc: Acc, track: Track, layer: AnimLayer, v: number, plan: Plan, d: AnimDrawing): void {
   // 07 §2.3, one handler per property.
@@ -282,6 +362,17 @@ function applyTrack(acc: Acc, track: Track, layer: AnimLayer, v: number, plan: P
     case "layerRotation":
       acc.layerTurn += v;
       break;
+    case "variableAlpha":
+      acc.vAlpha = v;
+      break;
+    case "variableAlphaMax":
+      acc.vAlpha = Math.max(acc.vAlpha, v);
+      break;
+    case "variableAlphaFade": {
+      const a = plan.inactiveAlpha ? plan.inactiveAlpha(layer) : INACTIVE_ALPHA;
+      acc.vAlpha += (a - acc.vAlpha) * v;
+      break;
+    }
     case "pulseAlpha": {
       const floor = plan.pulseFloor ? plan.pulseFloor(layer) : PULSE_FLOOR;
       acc.alpha *= floor + (1 - floor) * v;
@@ -373,7 +464,8 @@ function compose(acc: Acc, d: AnimDrawing): Matrix {
 
 function finish(acc: Acc, layer: AnimLayer, plan: Plan, d: AnimDrawing): LayerState {
   const cap = plan.alphaCap ? plan.alphaCap(layer) : 1;
-  let alpha = Number.isFinite(acc.alpha) ? Math.min(Math.max(acc.alpha, 0), cap) : 0;
+  const product = acc.alpha * acc.vAlpha;
+  let alpha = Number.isFinite(product) ? Math.min(Math.max(product, 0), cap) : 0;
   if (acc.hidden) alpha = 0;
   const finite = (v: number, rest: number) => (Number.isFinite(v) ? v : rest);
   return {
@@ -392,6 +484,7 @@ function finish(acc: Acc, layer: AnimLayer, plan: Plan, d: AnimDrawing): LayerSt
 function admits(track: Track, layer: AnimLayer, index: number, group: number, flags: number): boolean {
   if (track.layer !== undefined && track.layer !== index) return false;
   if (track.group !== undefined && track.group !== group) return false;
+  if (track.rank !== undefined && track.rank !== layer.rank) return false;
   const f = track.filter;
   return !f || ((flags ^ f.value) & f.mask) === 0;
 }
@@ -420,7 +513,10 @@ function evaluate(d: AnimDrawing, b: Built, spec: Spec, t: number, stop?: Stop):
   // 07 §6.4: effect time.
   let te = t * spec.speed;
   if (!Number.isFinite(te)) throw new RangeError(`effect time t · speed overflows: ${t} · ${spec.speed}`);
-  const loop = looping(plan) ? plan.loop : undefined;
+  const loop = cyclic(plan) ? plan.loop : undefined;
+  const count = loop ? countOf(loop) : undefined;
+  // The repetition in effect seconds: the cycle and the wall-clock gap at this speed (07 §6.2 step 5).
+  const period = loop ? periodAt(loop, spec.speed) : 0;
   if (!loop && plan.timeSpan !== undefined && plan.timeSpan > 0) {
     // 07 §7.8: t' = total · curve(t / total) over [0, total].
     const span = plan.timeSpan;
@@ -437,21 +533,33 @@ function evaluate(d: AnimDrawing, b: Built, spec: Spec, t: number, stop?: Stop):
 
   const states = d.layers.map((layer, i) => {
     const group = spec.byLayer ? layer.group : 0;
+    const clock = clockOf(plan, layer, spec);
     const flags = layer.flags | (layer.clearBehind[spec.renderingMode] ? LAYER_FLAG.eraser : 0) | side;
     let tracks = plan.tracks;
     let at = te;
-    const halt = stop?.groups[group];
+    const halt = stop?.groups[clock];
     if (loop && halt && te >= halt.end) {
-      // Stopped (07 §6.3 [INF]): past its cycle end the group plays the outro, then holds rest.
+      // Stopped (07 §6.3 [INF]): past its cycle end the clock plays the outro, then holds rest.
       tracks = halt.started ? (plan.outro?.tracks ?? []) : [];
       at = te - halt.end;
     } else if (loop) {
-      // 07 §6.3: group g at max(t − delay, 0); intro over [0, end], then the loop modulo its period.
-      const lt = Math.max(te - (delays[group] ?? 0), 0);
-      if (lt >= b.end) {
+      // 07 §6.3: clock c at max(t − delay, 0), or with the rank clock the delay after the intro
+      // (07 §6.2 step 4); intro over [0, end], then the loop modulo its period; a counted loop then
+      // plays the outro and rests (07 §6.2 step 5).
+      const delay = delays[clock] ?? 0;
+      const after = plan.clock === "rank";
+      const lt = Math.max(after ? te : te - delay, 0);
+      const u = lt - b.end - (after ? delay : 0);
+      if (lt < b.end) at = lt;
+      else if (u < 0) at = b.end; // waiting for its delay: the intro's end holds
+      else if (count !== undefined && u >= count * period) {
+        tracks = plan.outro?.tracks ?? [];
+        at = u - count * period;
+      } else {
+        // Past the cycle, in the gap, every track holds its last value.
         tracks = loop.tracks;
-        at = (lt - b.end) % loop.period;
-      } else at = lt;
+        at = u % period;
+      }
     }
     const acc = fresh();
     for (const track of tracks) {

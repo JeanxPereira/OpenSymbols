@@ -26,8 +26,17 @@ export interface Spec {
   byLayer: boolean;
   /** Draw: Off instead of On; Scale: down when `direction` is default (07 §8.3). */
   reversed: boolean;
-  /** Static Variable Color's value in [0, 1] (07 §9.2, §9.3). */
+  /**
+   * Static Variable Color's value in [0, 1] (07 §9.2, §9.3). Present: the static form. Absent: the
+   * animated form, shaped by `vcFill`, `vcReversing` and `vcInactive` (07 §9.5).
+   */
   variableValue?: number;
+  /** Animated Variable Color: option bit 31, iterative (07 §9.5); RenderBox's default is cumulative. */
+  vcFill: "cumulative" | "iterative";
+  /** Animated Variable Color: option bit 30, the reversing (bounce) builders (07 §9.5). */
+  vcReversing: boolean;
+  /** Animated Variable Color: option bit 29, inactive layers hidden (alpha 0) rather than dimmed (07 §9.5). */
+  vcInactive: "dim" | "hide";
   direction: "default" | "up" | "down";
   /** Breathe option bit 31: no pulse-alpha (07 §7.3). */
   breathePlain: boolean;
@@ -50,7 +59,10 @@ export interface Spec {
   appearance: "light" | "dark";
 }
 
-/** The 07 §8.3 defaults: by layer, direction default (= up), Replace downUp, once at speed 1, light. */
+/**
+ * The 07 §8.3 defaults: by layer, direction default (= up), Replace downUp, once at speed 1, light;
+ * Variable Color with no option bit set (cumulative, non-reversing, dim; 07 §9.5).
+ */
 export function defaultSpec(kind: EffectKind): Spec {
   return {
     kind,
@@ -65,6 +77,9 @@ export function defaultSpec(kind: EffectKind): Spec {
     rotateDirection: "default",
     drawIndividually: false,
     drawReversedOrder: false,
+    vcFill: "cumulative",
+    vcReversing: false,
+    vcInactive: "dim",
     renderingMode: "monochrome",
     appearance: "light",
   };

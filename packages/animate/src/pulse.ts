@@ -12,6 +12,11 @@ const LEVEL_OPACITY: Record<Spec["appearance"], Record<1 | 2 | 3, number>> = {
   dark: { 1: 1, 2: 0.5, 3: 0.25 },
 };
 
+/** 07 §2.7 [INF]: `Model::alpha(level)`, the hierarchical paint opacity of `level` in `appearance`. */
+export function levelAlpha(appearance: Spec["appearance"], level: 1 | 2 | 3): number {
+  return LEVEL_OPACITY[appearance][level];
+}
+
 /**
  * The pulse-alpha floor and alpha cap for Pulse and Breathe (07 §7.2). With some layer
  * `alwaysPulses`, by layer, in hierarchical mode, a layer's floor is `alpha(m) / alpha(level)`,

@@ -90,6 +90,26 @@ describe("copy", () => {
     expect(buildEffect("draw", { reversed: true, drawReversedOrder: true }, 1, "once")).toEqual({ kind: "draw", reversed: true, drawReversedOrder: true });
   });
 
+  it("Variable Color: the non-default options in a stable order; a value drops the animated options", () => {
+    expect(buildEffect("variableColor", {}, 1, "once")).toEqual({ kind: "variableColor" });
+    // explicit defaults are left out like unset ones; byLayer is not one of its options
+    expect(buildEffect("variableColor", { fill: "cumulative", inactive: "dim", reversing: false, byLayer: false }, 1, "once")).toEqual({ kind: "variableColor" });
+    const e = buildEffect("variableColor", { inactive: "hide", reversing: true, fill: "iterative" }, 2, "continuous");
+    expect(e).toEqual({ kind: "variableColor", fill: "iterative", reversing: true, inactive: "hide", speed: 2, repeat: "continuous" });
+    expect(jsxFor("Wifi", { effect: e })).toBe('<Wifi effect={{ kind: "variableColor", fill: "iterative", reversing: true, inactive: "hide", speed: 2 }} active={active} />');
+    expect(jsxFor("Wifi", { effect: { reversing: true, kind: "variableColor", fill: "iterative" } })).toBe(
+      '<Wifi effect={{ kind: "variableColor", fill: "iterative", reversing: true }} trigger={count /* each change plays it */} />',
+    );
+    expect(jsxFor("Wifi", { effect: { kind: "variableColor", fill: "cumulative", inactive: "dim", reversing: false } })).toBe(
+      '<Wifi effect={{ kind: "variableColor" }} trigger={count /* each change plays it */} />',
+    );
+    // a still frame: the value only, no speed or repeat, played by `active`
+    const still = buildEffect("variableColor", { variableValue: 0.5, fill: "iterative", reversing: true, inactive: "hide" }, 2, "continuous");
+    expect(still).toEqual({ kind: "variableColor", variableValue: 0.5 });
+    expect(jsxFor("Wifi", { effect: still })).toBe('<Wifi effect={{ kind: "variableColor", variableValue: 0.5 }} active={active} />');
+    expect(buildEffect("variableColor", { variableValue: 0 }, 1, "once")).toEqual({ kind: "variableColor", variableValue: 0 });
+  });
+
   it("replaceJsxFor: the Replace snippet with both components, show, style, magic and the icon props", () => {
     expect(replaceJsxFor("PlayFill", "PauseFill", { size: 32, weight: "bold" }, { style: "upUp", magic: true, speed: 2 })).toBe(
       '<Replace from={PlayFill} to={PauseFill} show={playing ? "to" : "from"} style="upUp" magic speed={2} size={32} weight="bold" />',

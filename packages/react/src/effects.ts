@@ -41,7 +41,18 @@ export type EffectProps =
       /** Draw Off only: retract the stroke and take the groups in reverse order. */
       drawReversedOrder?: boolean;
     })
-  | { kind: "variableColor"; /** 0..1. */ variableValue?: number };
+  | (EffectBase &
+      Repeating & {
+        kind: "variableColor";
+        /** 0..1: a still frame at this value. Absent: the animated effect, shaped by the options below. */
+        variableValue?: number;
+        /** Light the layers one after another and keep them lit (default), or one at a time. */
+        fill?: "cumulative" | "iterative";
+        /** Run back down after going up. Default false. */
+        reversing?: boolean;
+        /** Inactive layers dimmed (default) or hidden. */
+        inactive?: "dim" | "hide";
+      });
 
 /** The effect kinds an icon takes (Replace is its own component). */
 export type EffectKindProp = EffectProps["kind"];

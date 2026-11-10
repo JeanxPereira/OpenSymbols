@@ -223,11 +223,33 @@ kind:
 | `rotate` | `rotateDirection`: `"clockwise"` or `"counterClockwise"` (default: the symbol's own) | yes |
 | `scale` | `direction`: `"up"` or `"down"` | no |
 | `draw` | `reversed` (Draw Off), `drawIndividually` (each layer in turn), `drawReversedOrder` (Draw Off only: retract, groups in reverse order) | no |
-| `variableColor` | `variableValue`: 0 to 1 | static only, see below |
+| `variableColor` | `fill`, `reversing`, `inactive`, `variableValue`, see below | yes |
 
 A kind with a continuous form also takes `repeat: "once" | "continuous"`, which only
 `effectRef.play` reads: `active` always runs continuously and `trigger` always plays once. The
 types are a union on `kind`, so an option on a kind that does not take it is a type error.
+
+Variable Color lights the layers that have a variable-colour threshold in the order of their
+thresholds, lowest first. Its options:
+
+| option | |
+|---|---|
+| `fill` | `"cumulative"` (default): each layer lights in turn and stays lit until the cycle ends; `"iterative"`: one layer at a time, each dimming as the next lights |
+| `reversing` | `true`: after reaching the last layer, run back down to the first (default `false`) |
+| `inactive` | the layers not lit: `"dim"` (default) or `"hide"` |
+| `variableValue` | 0 to 1: instead of animating, hold a still frame at this value, the same look as the `variableValue` prop; `fill`, `reversing`, `inactive`, `speed` and `repeat` then do nothing |
+
+A symbol without thresholds animates as a whole: no layer dims at the start, the whole symbol
+dims to the inactive alpha and back each cycle (with `inactive: "hide"` it disappears and
+comes back), and it snaps back to full at the end. Played once, the effect dims the
+inactive layers, runs one cycle and returns to the plain symbol; continuously, it repeats the
+cycle until `active` turns false or `stop()` is called, then finishes the cycle and returns to
+the plain symbol. `byLayer` does nothing to it.
+
+```tsx
+<Wifi effect={{ kind: "variableColor", fill: "iterative", reversing: true }} active={searching} />
+<SpeakerWave3 effect={{ kind: "variableColor", variableValue: volume }} active />
+```
 
 `Replace` swaps one symbol for another:
 
@@ -251,16 +273,15 @@ at once and Replace swaps at once.
 
 What is approximate or missing:
 
-- Variable Color's animated forms (iterative, cumulative, reversing) are not decoded yet and
-  are not available. The `variableColor` kind holds the static value, the same look as the
-  `variableValue` prop.
+- Variable Color's defaults (cumulative, not reversing, dimmed) are those of Apple's renderer
+  with no option set; which options SwiftUI's `.variableColor` passes by default is not known.
 - Stopping is inferred: `stop()` and `active` turning false let each motion group finish its
   current cycle on its own delayed clock, then that group rests. Bounce, whose loop does not
   end at rest, plays its outro from the cycle end to settle; when Apple starts that outro is
   not known. `stop()` does nothing to a
   once effect, which runs out as it is.
-- `active` on a kind without a loop (`draw`, `appear`, `disappear`, `scale`, `variableColor`)
-  plays it once, and `active` turning false does nothing to it. `scale` scales once and holds
+- `active` on a kind without a loop (`draw`, `appear`, `disappear`, `scale`, and
+  `variableColor` with a `variableValue`) plays it once, and `active` turning false does nothing to it. `scale` scales once and holds
   its end state.
 - Timing, curves and stagger come from the format notes in `Docs/format/07`; where those mark a
   value as inferred, so is the motion.

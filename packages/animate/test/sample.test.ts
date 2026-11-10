@@ -405,9 +405,10 @@ describe("variableColor (static)", () => {
     expect(vc(0.56, { vcContinuous: true })[2]!.alpha).toBe(1);
   });
 
-  it("a non-finite or missing value reads 0; the value is clamped", () => {
+  it("a non-finite value reads 0; the value is clamped; a missing one is the animated form (07 §9.5)", () => {
     expect(vc(NaN)[2]!.alpha).toBe(Math.fround(0.3));
-    expect(vc(undefined)[2]!.alpha).toBe(Math.fround(0.3));
+    // Animated: at t = 0 the intro has not faded anything yet.
+    expect(vc(undefined)[2]!.alpha).toBe(1);
     expect(vc(7)[2]!.alpha).toBe(1);
   });
 
@@ -495,6 +496,9 @@ describe("spec", () => {
       renderingMode: "hierarchical",
       appearance: "dark",
       rotateDirection: "counterClockwise",
+      vcFill: "iterative",
+      vcReversing: true,
+      vcInactive: "hide",
     };
     for (const k of Object.keys(alt) as Array<keyof Spec>) {
       const changed = { ...base, [k]: alt[k] } as Spec;

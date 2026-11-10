@@ -42,6 +42,11 @@ export interface AnimLayer {
   familyLayer: number;
   attachments: StrokeAttachment[];
   variableThreshold?: number;
+  /**
+   * The dense 1-based rank of the layer's finite `variableThreshold` among the drawing's distinct
+   * thresholds, ascending; equal thresholds share a rank; −1 without one (07 §2.2 index mode 3, §9.5).
+   */
+  rank: number;
   variableDraw?: [number, number];
   /** Some layer of its family keyframes its stroke or declares attachments (08 §2). */
   strokable: boolean;
@@ -63,6 +68,8 @@ export interface AnimDrawing {
   layers: AnimLayer[];
   /** Distinct motion groups (07 §4.1). */
   groupCount: number;
+  /** Distinct finite thresholds, `n` of Variable Color's animated forms (07 §9.5). */
+  rankCount: number;
   viewBox: ViewBox;
   transform: Transform;
   /** Points per unit of a translation value: the reference point size, else the viewBox height (07 §2.6). */
@@ -227,6 +234,7 @@ export function toAnimDrawing(variant: VariantData, interpolated: Interpolated, 
       familyLayer: num(a.familyLayer) ?? -1,
       attachments: attachments(a.attachments),
       strokable: false,
+      rank: -1,
       flags: 0,
     };
     if (l.variableThreshold !== undefined) out.variableThreshold = l.variableThreshold;
@@ -254,6 +262,19 @@ export function toAnimDrawing(variant: VariantData, interpolated: Interpolated, 
     if (l.alwaysPulses) f |= LAYER_FLAG.alwaysPulses;
     if (l.alwaysRotates) f |= LAYER_FLAG.alwaysRotates;
     l.flags = f;
+  }
+
+  // 07 §9.5: the threshold ladder. Distinct finite thresholds ascending; each layer with one takes
+  // the dense 1-based rank of its value (equal values share a rank) and the flag 0x20.
+  const thresholds = [...new Set(layers.map((l) => l.variableThreshold).filter((t): t is number => t !== undefined && Number.isFinite(t)))].sort(
+    (a, b) => a - b,
+  );
+  const rankOf = new Map(thresholds.map((t, i) => [t, i + 1]));
+  for (const l of layers) {
+    const r = l.variableThreshold === undefined ? undefined : rankOf.get(l.variableThreshold);
+    if (r === undefined) continue;
+    l.rank = r;
+    l.flags |= LAYER_FLAG.hasThreshold;
   }
 
   const { viewBox, transform } = interpolated;
@@ -285,6 +306,7 @@ export function toAnimDrawing(variant: VariantData, interpolated: Interpolated, 
   const out: AnimDrawing = {
     layers,
     groupCount: ids.length,
+    rankCount: thresholds.length,
     viewBox,
     transform,
     // 07 §2.6: the reference point size, else the viewBox height [INF].

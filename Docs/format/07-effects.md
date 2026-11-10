@@ -82,6 +82,12 @@ calls:
 A stored value is 12 bytes `{u32 curve; f32 duration; f32 value}`; `push_value` stores
 `max(duration, 0)` (0x1A792839C–0x1A79283AC).
 
+`[BIN]` A stored header is `{u32 word; u32 index; f32 start; (pad); u64 values-ref}`, walked
+with a 24-byte stride (0x1A789D368). The values-ref, `(2 · storage[+0x308]) | 1`, is taken
+at each `push_keyframes`, so headers pushed back to back with no `push_value` between them
+**share** the value list that follows (`vc_sequential_keyframes` 0x1A789F3D4–0x1A789F434 and
+0x1A789F4C8–0x1A789F520, values at 0x1A789F59C; §9.5).
+
 **Evaluation** `[BIN]` (`Keyframes::eval`, 0x1A7927E80): subtract the list's start; walk
 the segments; within segment `i` of duration `d_i`,
 
@@ -111,10 +117,16 @@ and an index, a start time, and a layer **filter** `(mask, value)`. `Animation::
 ((layer.flags | side) ^ value) & mask == 0
 ```
 
-and, by index mode: 0 every layer; 1 the layer's compacted motion group (§4.1) equals the
-index; 2 the layer's own index equals it; 3 `layer[+0x58]` equals it `[OBS]` (what that
-field is). `side` is `0x100` for the source glyph of a Replace pair and `0x200` for the
-destination (0x1A789D1E0 / 0x1A789D1E8), 0 otherwise.
+and, by index mode: 0 every layer; 1 the layer's compacted motion group (§4.1,
+`layer[+0x48]`) equals the index; 2 the layer's own index (the presentation-layer loop
+index) equals it; 3 the layer's **threshold rank** `layer[+0x58]` (§9.5) equals it
+(0x1A789D390–0x1A789D3A4). `side` is `0x100` for the source glyph of a Replace pair and
+`0x200` for the destination (0x1A789D1E0 / 0x1A789D1E8), 0 otherwise.
+
+`[BIN]` The header word `w` packs these fields (0x1A789D344–0x1A789D3A4): property
+`w & 0x1F`, filter mask `(w >> 5) & 0x3FF`, filter value `(w >> 15) & 0x3FF`, index mode
+`(w >> 25) & 3`; the index and the start are the header's next two fields (§2.1). Pulse's
+`0x20082C` (0x1A789EAF8) reads property 12, mask `0x41`, value `0x40`.
 
 **Layer flags** `[BIN]` (`[layer+0x68]`, set in the layer constructor 0x1A7821F3C–0x1A78223D4):
 
@@ -125,6 +137,7 @@ destination (0x1A789D1E0 / 0x1A789D1E8), 0 otherwise.
 | 2 | `0x4` | tag `_badge` | `tags` contains `_badge` |
 | 3 | `0x8` | tag `_enclosure.stroke` or `_enclosure.fill` | either in `tags` |
 | 4 | `0x10` | animates its stroke (§7.8, [08](08-draw-clip.md) §2) | strokable family |
+| 5 | `0x20` | has a finite variable threshold; set in `Glyph::Glyph` (0x1A78203DC), not in the layer constructor (§9.5) | `variableThreshold` present |
 | 6 | `0x40` | `-sfsymbols-always-pulses` | `alwaysPulses` |
 | 7 | `0x80` | `-sfsymbols-always-rotates` | `alwaysRotates` |
 | 10–17 | | hierarchy level | `role` (§2.7) |
@@ -145,6 +158,7 @@ The model's filters, named:
 | `slash`, `badge`, `enclosure` | mask = value = the flag | layers with that tag |
 | `notEnclosure` | mask `0x8`, value 0 | layers without an enclosure tag |
 | `notStroke` | mask `0x11` (+`0x8`), value 0 | non-eraser layers that do not animate their stroke |
+| `hasThreshold` | mask `0x20`, value `0x20` (headers `0x0010040A`, `0x00100408`) | layers with a finite variable threshold (§9.5) |
 
 ### 2.3 The properties and how each applies to a layer
 
@@ -160,19 +174,39 @@ The model's filters, named:
 | 5 | `translation` | 0x1A789D51C | `offset += dir · v` (§2.6) |
 | 6 | `symbol-rotation` | 0x1A789D640 | `symbolTurn += v` (radians) |
 | 7 | `layer-rotation` | 0x1A789D650 | `layerTurn += v` (radians) |
-| 8 | `variable-alpha` | 0x1A789D5EC | both alphas `= v` |
-| 9 | `variable-alpha-max` | 0x1A789D6B0 | `[OBS]` |
-| 10 | `variable-alpha-fade` | 0x1A789D540 | `alpha += (target − alpha) · v`, target 0 with option bit 29, else `0.3` |
-| 11 | `variable-alpha-interpolant` | 0x1A789D66C | `[OBS]` |
+| 8 | `variable-alpha` | 0x1A789D5EC | both alphas `= v` (an assignment) |
+| 9 | `variable-alpha-max` | 0x1A789D6B0 | both alphas `= max(alpha, v)` (0x1A789D6B0–0x1A789D6C0, 0x1A789D7CC) |
+| 10 | `variable-alpha-fade` | 0x1A789D540 | both alphas `+= (target − alpha) · v`; target 0 with option bit 29, else `Model::alpha(2)` in hierarchical mode, else `0.30000001192092896` (0x1A789D540–0x1A789D584) |
+| 11 | `variable-alpha-interpolant` | 0x1A789D66C | a change of value (§9.4); below |
 | 12 | `pulse-alpha` | 0x1A789D460 | `alpha *= floor + (1 − floor) · v`; `floor` in §7.2 |
 | 13 | `clip-alpha` | 0x1A789D428 | `alpha *= v`; `v ≤ 0` hides the layer |
 | 14 | `stroke-start` | 0x1A789D3F4 | a layer that animates its stroke: the clip's start; any other: `alpha *= 1 − v` |
 | 15 | `stroke-end` | 0x1A789D3F4 | a layer that animates its stroke: the clip's end; any other: `alpha *= v` |
 | 16 | `stroke-attachment-scale` | 0x1A789D5DC | the rider scale ([08](08-draw-clip.md) §11.5) |
 
+"Both alphas" are the presentation layer's pair `[pl+0x20]`, `[pl+0x24]`. "Hierarchical
+mode" is the glyph's rendering mode 3 (`glyph_info[+0x18]`), and `Model::alpha(k)` is §2.7.
+
+`[BIN]` **Property 11** (0x1A789D66C–0x1A789D7CC), with `M = Model[+0x60]`:
+
+- when the symbol draws variably: `variable_draw_params(old + (M − old) · v)`, with `old` =
+  the presentation symbol's `[+0x1E4]`; it writes both alphas, the stroke range `[pl+0x48]`
+  and `[pl+0x2C]`;
+- otherwise a target `T`, then both alphas `+= (T − alpha) · v`: when `M` is NaN or the
+  layer's threshold rank is −1, `T = 1` (its first component is `Model::alpha` of the level
+  of the same-index layer of the model's glyph, when the presentation symbol's glyph is the
+  model's glyph); else when the rank is `≤ (u32) M`, `T = Model::alpha(0)`; else `T = 0.3`,
+  or `Model::alpha(2)` in hierarchical mode.
+
+`[OBS]` What `Model[+0x60]` holds (it is compared as an integer with the rank, so it is not
+the 0…1 value) and what `Model::alpha(0)` is.
+
 `[INF]` `scale` is an assignment in Apple; no effect in this document gives one layer two
 `scale` lists at once, so the model may fold them as a product. The model folds alphas as
 a product of the alpha-like properties (1, 12, 13, and 14/15 on a non-strokable layer).
+Properties 8, 9 and 10 act on a separate per-layer `vAlpha` that starts at 1: 8 assigns
+it, 9 takes `max(vAlpha, v)`, 10 moves it toward the inactive alpha `a` (§9.5) by `v`;
+tracks apply in the plan's order, and `vAlpha` then multiplies into `alpha`.
 
 `[BIN]` On an eraser layer `clip-alpha` also drives a second alpha (`[pl+0x24]`) that
 RenderBox multiplies into the knockout (`Presentation::draw` 0x1A785A680–0x1A785A6A8).
@@ -439,11 +473,15 @@ layer_delay(g) = g' · step,   step = 0.05000000074505806 when n < 5,
 g' = n − 1 − g for Bounce Down (bit 31, 0x1A789CDA4–0x1A789CDBC), else g
 ```
 
-`layer_delay` acts only on kinds 3 (Bounce) and 10 (Wiggle) (`cmp w8,#0xa ; ccmp w8,#3`,
-0x1A789CCF8) and on Variable Color (kind 1, §9.5). The delay is a constant phase per group:
-it survives the loop's seam without cutting a segment, and the outro runs on the shifted
-clock too. Rotate continuous does not set flag 6: it staggers only its intro keyframes and
-loops in unison (§7.5).
+This group formula belongs to kinds 3 (Bounce) and 10 (Wiggle) (`cmp w8,#0xa ; ccmp
+w8,#3`, 0x1A789CCF8). The delay is a constant phase per group: it survives the loop's seam
+without cutting a segment, and the outro runs on the shifted clock too. Rotate continuous
+does not set flag 6: it staggers only its intro keyframes and loops in unison (§7.5).
+
+`[BIN]` Kind 1 (Variable Color) has its own branch (0x1A789CD28–0x1A789CE34), indexed by
+the layer's **threshold rank**, not its motion group, and it takes effect only through flag
+6 without flag 16 (§6.2 step 4), which `description` sets for Variable Color only in the
+wave (§9.5). Every other Variable Color form staggers in its keyframes' start times.
 
 ### 4.7 The stagger always fits
 
@@ -483,8 +521,9 @@ its total is its own sum. `[INF]` (arithmetic on the constants above.)
 ### 6.1 Phases
 
 `[BIN]` An effect with a continuous form (Bounce, Wiggle, Rotate: option bit 4, §8.1) is
-built per **phase** (`x3` in the keyframe builders): 0 intro, 1 loop, 2 outro. Pulse and
-Breathe repeat their once keyframes. The description flags (0x1A789E5D4): bit 9 "has an
+built per **phase** (`x3` in the keyframe builders): 0 intro, 1 loop, 2 outro. Variable
+Color's animated forms are phased the same way, without bit 4 (§9.5). Pulse and Breathe
+repeat their once keyframes. The description flags (0x1A789E5D4): bit 9 "has an
 intro", bit 10 "has an outro", bit 11 "repeats" (set by the constructor when the repeat
 count is > 1, 0x1A789C358–0x1A789C370), bits 6 and 16 the per-layer clock delay (§4.6).
 
@@ -497,9 +536,12 @@ count is > 1, 0x1A789C358–0x1A789C370), bits 6 and 16 the per-layer clock dela
    intro's first value;
 3. `t < intro` → phase 0 at `t`;
 4. else `t −= intro`; with flag 6 but not 16, `t −= layer_delay` here instead
-   (0x1A789E1C0);
+   (0x1A789E1C0, 0x1A789E1C8–0x1A789E1DC; Variable Color's wave, §9.5);
 5. with flag 11: `s = t / period`; `iter = floor(min(count, s))`; local time
-   `(s − iter) · period` (0x1A789E278).
+   `(s − iter) · period` (0x1A789E278), then clamped to the duration `D`. `period = D +
+   speed · gap`, where `gap` is the animation's repeat gap (`anim+0x20`, from the
+   description, constructor 0x1A789C324–0x1A789C328): the gap holds the last frame. The
+   outro (phase 2) starts once `t > period · count`, when flag 10 is set.
 
 `[OBS]` How the outro is entered when a continuous effect is removed (where `count` comes
 from for an indefinite effect, and whether the current loop iteration completes first) is
@@ -508,7 +550,8 @@ not read.
 ### 6.3 The model
 
 `[INF]` An effect builds a **plan**: `tracks` with a `duration`, and for continuous effects
-a `loop` (tracks timed from the start of each repetition) with `loopPeriod`, plus
+a `loop` (tracks timed from the start of each repetition) with `loopPeriod` (the cycle), an
+optional repeat gap and an optional repeat count (a counted loop), plus
 `groupDelay[g]` (§4.6, empty when none) and an optional whole-clock warp (`timeSpan`,
 `timeCurve`; Draw `.individually`, §7.8).
 
@@ -519,12 +562,23 @@ a `loop` (tracks timed from the start of each repetition) with `loopPeriod`, plu
   `max(t − groupDelay[g], 0)` through the same rule, and keeps its own layers.
 - **Continuous**, effect without a loop (Appear, Disappear, Scale, Replace, Draw): behaves
   as Once.
+- **Once**, effect with a counted loop (Variable Color, §9.5): the loop with count 1. The
+  intro, then each clock's delay, one cycle, the repeat gap (the cycle's last values held),
+  then the outro, then rest. With the rank clock (the wave) every rank plays the intro
+  undelayed and waits for its delay after it, holding the intro's end.
 - `duration()` = the loop period for a looping continuous effect, else the latest track
   end, or the effect's total of §5 when that is longer (Replace's 0.5, Magic Replace's
-  badge 1.0), 1.0 when there is neither, so a frame schedule stays sane.
+  badge 1.0), 1.0 when there is neither, so a frame schedule stays sane. For a counted loop
+  it is intro + the largest delay + count · (cycle + gap) + outro.
+- **The repeat gap** (Variable Color) is wall-clock seconds, as RenderBox's
+  `period = D + speed · gap` (§6.2 step 5) has it: the intro, the delays, the cycle and the
+  outro are divided by `speed` (§6.4), the gap is not. So a looping continuous effect's
+  `duration()` is `D / speed + gap`, and a counted loop's is
+  `(intro + largest delay + count · D + outro) / speed + count · gap`.
 - `loopStart()` = intro duration + the largest `groupDelay` for a looping continuous effect
   (the first instant every group is looping), else 0. Then
-  `sample(t) == sample(t + duration())` for every `t ≥ loopStart()`.
+  `sample(t) == sample(t + duration())` for every `t ≥ loopStart()`. A counted loop has
+  `loopStart()` 0 and no `cycleEnds` or `stopAt`: it is not stopped, it runs out.
 - **Stopping a continuous effect.** The outro phases (§7.1, §7.4, §7.5) are documented
   data. `[OBS]` How Apple starts an outro when the effect is removed is not read (§6.2).
   `[INF]` The model, when a continuous effect is stopped, **finishes the current cycle**
@@ -535,12 +589,16 @@ a `loop` (tracks timed from the start of each repetition) with `loopPeriod`, plu
   stopping never jumps. `[INF]` That the outro starts at the cycle end is the model's
   choice; when Apple starts it is not read. The other loops (Pulse, Breathe, Wiggle,
   Rotate) end each cycle at rest, and the model does not play their outro tables.
+  Variable Color's loop ends each cycle at `a`, or lit (§9.5), and its outro is always
+  played; a layer that ends its cycle lit drops to `a` as the outro starts (§9.5). Under the rank clock (the wave), a rank stopped while still waiting for its delay
+  after the intro ends its cycle at once and plays the outro from there, since the intro
+  has already dimmed it.
 
 ### 6.4 Speed
 
 `[INF]` `speed` (finite, > 0) has the public API's meaning: **higher is faster**. The plan
 is evaluated at effect time `t · speed`, which divides every duration, stagger and delay by
-`speed`. Durations the model returns (`duration()`, `loopStart()`) are the plan's divided
+`speed`, except Variable Color's repeat gap, which is wall-clock (§6.3). Durations the model returns (`duration()`, `loopStart()`) are the plan's divided
 by `speed`.
 A non-finite `t` or a non-positive or non-finite `speed` is rejected, never clamped into a
 NaN.
@@ -1053,12 +1111,15 @@ In subtypes 6 and 7 the enclosure layers (flag `0x8`) take no part in the draw o
 |---:|---|---|---|
 | 3 | all | **by layer**: count motion groups (else one group) | `RBSymbolAnimationByLayer` → 8 (0x1A78FBF5C–0x1A78FBF7C) |
 | 4 | Bounce, Wiggle, Rotate | **continuous**: the phased form | `BounceOptions`/`RotateOptions` `0x10` (0x1A78FC138, 0x1A78FC27C) |
+| 6 | Variable Color | **the wave**: per-layer clock delayed by threshold rank (§9.5) | set by `Animation::description` (0x1A789E718–0x1A789E764) |
 | 23–26 | Replace | subtype field (§7.9) | `infer_replace_subtype` |
 | 27 | Replace | Magic Replace by draw allowed | default on |
 | 28 | Replace | Magic Replace by badge allowed | default on |
+| 28 | Variable Color | `variableColorContinuous`: iterative's wrap track, or the wave (§9.5) | symbol defaults (0x1A78FC2E8–0x1A78FC310) |
 | 29 | Replace | Magic Replace by slash allowed | default on |
 | 29 | Draw | `clip-alpha` outside the layer's own span | set by Magic Replace |
-| 29 | Variable Color | `variable-alpha-fade` target 0 instead of 0.3 | 0x1A789D544 |
+| 29 | Variable Color | **hide** inactive layers: inactive alpha 0 | `VariableColorOptions` bit 1 (0x1A78FC184–0x1A78FC204) |
+| 30 | Variable Color | **reversing**: the `_bounce` builders | `VariableColorOptions` bit 3 (idem) |
 | 30 | Appear, Disappear | **up**: scale 0.75 | default on |
 | 30 | Wiggle | negate every value | `WiggleOptions` high `0x20` |
 | 30 | Draw Off | **reversed**: retract, and flip the group order | `DrawOnOffOptions` bit 1 |
@@ -1070,8 +1131,31 @@ In subtypes 6 and 7 the enclosure layers (flag `0x8`) take no part in the draw o
 | 31 | Rotate | negative (counter-clockwise) | `RotateOptions` low 2, or `rotatesClockwise = false` |
 | 31 | Appear, Disappear | **down**: scale 1.25 | |
 | 31 | Draw | **individually** (with bit 3) | `DrawOnOffOptions` bit 0 |
+| 31 | Variable Color | **iterative**: the sequential builders | `VariableColorOptions` bit 0 (0x1A78FC184–0x1A78FC204) |
 
 `[INF]` The parser keeps a second word (`[sp+0x10]`), read as "explicitly set".
+
+**Variable Color's options.** `[BIN] Symbols 204` `NSSymbolVariableColorEffect` holds three
+styles: `+0x10` inactive (`effectWithHideInactiveLayers` 0x22340A65C stores 1,
+`…DimInactiveLayers` 0x22340A690 stores 2), `+0x18` playback (`…Reversing` 0x22340A5F4 → 1,
+`…NonReversing` 0x22340A628 → 2), `+0x20` fill (`…Iterative` 0x22340A58C → 1, `…Cumulative`
+0x22340A5C0 → 2); `+effect` (0x22340A534) zeroes all three. `_rbOptionsMutable`
+(0x22340A6C4–0x22340A714) packs an integer `o`: bit 0 = fill iterative, bit 1 = inactive
+hidden, bit 3 = playback reversing; dim, non-reversing, cumulative and the defaults (0) set
+nothing. `[INF]` `o` is stored under `RBSymbolAnimationVariableColorOptions` (the key object
+at 0x2700C0CA0 is not resolved by name).
+
+`[BIN]` RenderBox (`addAnimation:options:` case 1, 0x1A78FC184–0x1A78FC204) sets bit 31
+from `o` bit 0, bit 30 from `o` bit 3, bit 29 from `o` bit 1, and marks `0xE0000000`
+explicit. Bit 28 is the boolean `variableColorContinuous` of the
+`RBSymbolAnimationSymbolDefaults` dictionary (0x1A78FC2E8–0x1A78FC310), the catalog's
+`vcContinuous` (§9.1); `[INF]` without that key it comes from the glyph's own symbol
+defaults (the selectors are not resolved). Bit 28 is per symbol, not per effect. Bit 6 is
+set by neither Symbols nor the parser, only by `description` (§9.5).
+
+`[BIN]` The style is `opts >> 30`: 0 cumulative, 1 cumulative reversing, 2 iterative, 3
+iterative reversing. Dim is bit 29 clear, hide bit 29 set. `[INF]` The default fill is
+cumulative because fill 0 sets no bit.
 
 ### 8.2 Default words
 
@@ -1098,7 +1182,13 @@ those words. Note bit 3 (by layer) is on in both.
 | `drawReversedOrder` | boolean | 30 (Draw Off only) |
 | `rotateDirection` | default, clockwise, counterClockwise | Rotate 31 `[INF]` (§7.5) |
 | `renderingMode` | monochrome, hierarchical, palette, multicolor | glyph mode (Pulse floor) |
-| `variableValue` | `[0, 1]` | §9 |
+| `variableValue` | `[0, 1]`, optional | present: the static form (§9.2–§9.4); absent: the animated form (§9.5) |
+| `vcFill` | cumulative (default), iterative | Variable Color 31 |
+| `vcReversing` | boolean, default false | Variable Color 30 |
+| `vcInactive` | dim (default), hide | Variable Color 29 |
+
+Bit 28 is the drawing's `vcContinuous`, not a `Spec` field; bit 6 follows from the other
+fields (§9.5).
 
 ## 9. Variable Color
 
@@ -1116,18 +1206,22 @@ The value `v ∈ [0, 1]` is a position, not a time. `[INF]` A non-finite `v` rea
 clamped to `[0, 1]`. For each layer with a threshold `θ` (layers without one are always
 drawn at full alpha):
 
-An **inactive** layer is dimmed, not removed: its alpha is `a₀ = 0.30000001192092896`, the
-target of `variable-alpha-fade` (§2.3 property 10, constant 0x1A795E054, §9.5), or `a₀ = 0`
-with option bit 29 (0x1A789D544, §8.1). `[INF]` that the static form rests where the fade
-property drives an inactive layer; the model's `Spec` has no field for bit 29 (the public
-`hideInactiveLayers`, §9.5), so its static form uses `0.3`.
+An **inactive** layer is dimmed, not removed: its alpha is `a₀ = 0.30000001192092896`
+(constant 0x1A795E054), the target of the property-11 handler that a change of value
+drives (§2.3, §9.4) outside hierarchical mode. `[BIN]` That handler reads no option bit 29
+(0x1A789D66C–0x1A789D7CC); bit 29 (`hideInactiveLayers`) acts on the animated forms through
+`variable-alpha-fade` and the inactive alpha of the builders (§9.5). `[INF]` The model's
+static form uses `a₀ = 0.3` in every rendering mode and whatever `vcInactive` (§8.3) says;
+`vcInactive` belongs to the animated forms.
 
 - **Hard cut** (`vcContinuous` false): `alpha = v ≥ θ ? 1 : a₀`. `[INF]` `≥`, compared
   directly, no quantisation.
 - **Band** (`vcContinuous` true): `alpha = a₀ + (1 − a₀) · clamp((v − (θ − w)) / (2w), 0, 1)`
   with `w = 0.06`. `[INF]` The band width is the model's: thresholds step by about 0.13, and
-  0.06 keeps adjacent bands apart. `[OBS]` Apple's continuous rendering was not located in
-  RenderBox.
+  0.06 keeps adjacent bands apart. `[BIN]` RenderBox reads `vcContinuous` as
+  `variableColorContinuous`, option bit 28 (§8.1), which changes the animated iterative
+  forms (§9.5). `[OBS]` Whether it also changes the static rendering, and Apple's continuous
+  rendering itself, are not located in RenderBox.
 
 `visible = alpha > 0` (always, unless `a₀ = 0`).
 
@@ -1151,70 +1245,386 @@ was not read.
 
 `[BIN]` Kind 0, `variable_value_keyframes` (0x1A789EDDC), lasts `0.3333333432674408`
 (0x1A7960300); its alpha table `variable_value::alpha_values` (0x1A7960EFC) is
-`0 →(0.3333333432674408, c0)→ 1`. `[INF]` A change of `variableValue` cross-fades linearly
-over 1/3 s from the old static state to the new. `[OBS]` Which property the table drives
-(`variable-alpha`, 8, by its name) and between which states.
+`0 →(0.3333333432674408, c0)→ 1`. The table drives property 11, `variable-alpha-interpolant`
+(§2.3), under header `0x0010040B` (filter `hasThreshold`, mask = value = `0x20`), or
+`0x0008020B` (mask = value = `0x10`, the layers that animate their stroke) when the
+arguments' "should variable draw" byte `[+26]` is set. `[INF]` A change of `variableValue`
+cross-fades linearly over 1/3 s from the old static state to the new. `[OBS]` The states
+the handler moves between depend on `Model[+0x60]` and `Model::alpha(0)` (§2.3).
 
-### 9.5 The animated forms: what is read
+### 9.5 The animated forms
 
-`[BIN]` Kind 1, **variable color**. The keyframe builders are `vc_intro_outro`,
-`vc_cumulative`, `vc_sequential`, `vc_cumulative_bounce` and `vc_sequential_bounce`, in
-0x1A789EE64 … 0x1A789F600. Their duration depends on the style and the number of layers
-(`local_duration`, 0x1A789C60C). Constants materialised in that family:
+`[BIN]` Kind 1, **variable color**. `Animation::keyframes` (0x1A789E39C, kind 1 at
+0x1A789E440–0x1A789E550) builds the intro and the outro with `vc_intro_outro_keyframes`
+(0x1A789EE64) and the loop phase with one of four builders, chosen by the style `opts >> 30`
+(§8.1; the dispatch value is `style ^ 2`):
 
-| value | address |
+| style | public options | builder | address |
+|---:|---|---|---|
+| 0 | cumulative | `vc_cumulative_keyframes` | 0x1A789EF08 |
+| 1 | cumulative, reversing | `vc_cumulative_bounce_keyframes` | 0x1A789F10C |
+| 2 | iterative | `vc_sequential_keyframes` | 0x1A789F310 |
+| 3 | iterative, reversing | `vc_sequential_bounce_keyframes` | 0x1A789F600 |
+
+Constants of the family `[BIN]`, float32, each read by its bit pattern in its literal pool:
+
+| value | bits | address | role |
+|---|---|---|---|
+| `0.3333333432674408` | `0x3EAAAAAB` | 0x1A7960300 | 1/3: intro, outro, rise and decay |
+| `0.6666666865348816` | `0x3F2AAAAB` | 0x1A7960C84 | 2/3: cumulative's hold end `E` for n = 2 |
+| `0.6666666269302368` | `0x3F2AAAAA` | 0x1A7960CC4 | cumulative's step budget, n ≥ 4 |
+| `0.01666666753590107` | `0x3C888889` | 0x1A7960C94 | 1/60 |
+| `0.0833333358168602` | `0x3DAAAAAB` | 0x1A796032C | 1/12 |
+| `0.111111119389534` | `0x3DE38E3A` | 0x1A7960C98 | 1/9 |
+| `1.3333333730697632` | `0x3FAAAAAB` | 0x1A7960C90 | 4/3 |
+| `0.2083333432674408` | `0x3E555556` | 0x1A7960CC8 | 5/24 |
+| `0.4166666865348816` | `0x3ED55556` | 0x1A7960CCC | 5/12 |
+| `0.30000001192092896` | `0x3E99999A` | 0x1A795E054 | the inactive alpha |
+| `2.5`, `1.0` | — | `FMOV` immediates | |
+
+`vc_cumulative_keyframes` takes its n ≥ 4 step from 0x1A7960CC4 and its n = 2 hold end from
+0x1A7960C84 (0x1A789F00C, 0x1A789F050). `[INF]` `vc_cumulative_bounce_keyframes` uses the same
+step (its decompiled expression is the same `0.66667 / (n − 1)`; its literal pool is not read
+separately).
+
+**The threshold rank.** `[BIN]` The layer constructor sets `layer[+0x44]` (the threshold) to
++∞ (0x1A7821DB4–0x1A7821DB8) and `layer[+0x58]` to −1 (0x1A7821DC0–0x1A7821DC8), then the
+threshold from CoreUI (0x1A7822350–0x1A782235C; `[INF]` `variableThreshold`, the selector stub
+is not resolved). `Glyph::Glyph` collects `(threshold, layer index)` for every layer with a
+finite threshold (0x1A782012C–0x1A7820164), sorts the pairs ascending (threshold, then layer
+index) and walks them from `prev = +∞` (0x1A7820348–0x1A78203E8): when the threshold differs
+from the previous one, `glyph[+0x1D4] += 1`; then `layer[+0x58] = glyph[+0x1D4]` and
+`layer.flags |= 0x20` (§2.2). So a layer's **rank** `k` is the dense 1-based rank of its
+threshold value among the drawing's distinct thresholds, ascending: equal thresholds share a
+rank and animate together. `n = glyph[+0x1D4]` is the number of distinct thresholds; it
+reaches the builders as `args[+0x14]` (`apply`, 0x1A789D170–0x1A789D174).
+
+`[INF]` Every list below is indexed by rank (index mode 3) or filtered by flag `0x20`, so a layer
+without a threshold (rank −1) is never animated, except when `n = 0` (below). No builder
+reads the motion groups (`layer[+0x48]`), `glyph[+0x1e0]` or `drawReversesMotionGroups`
+`[BIN]`: by layer and motion groups play no part in Variable Color.
+
+**The inactive alpha** `a` `[BIN]`: 0 with option bit 29; else `Model::alpha(2)` when the
+rendering mode `args[+0]` (= `glyph_info[+0x18]`) is 3, hierarchical; else
+`0.30000001192092896`. Read identically in the four builders (0x1A789EF3C–0x1A789EF68,
+0x1A789F138–0x1A789F16C, 0x1A789F34C–0x1A789F37C, 0x1A789F63C–0x1A789F670) and in the
+`variable-alpha-fade` handler (0x1A789D540–0x1A789D56C). `Model::alpha(k)` (0x1A78007AC) is
+`byte[Model + 0x6C + min(k, 3)] / 255`.
+
+**Header words** `[BIN]` (fields as in §2.2):
+
+| word | property | filter | index mode | used by |
+|---|---|---|---|---|
+| `0x06000008` | 8 `variable-alpha` | none | 3, index = rank | the four builders |
+| `0x06000009` | 9 `variable-alpha-max` | none | 3, index 1 | the wrap track (bit 28) |
+| `0x0010040A` | 10 `variable-alpha-fade` | `hasThreshold` | 0 | intro, outro |
+| `0x00100408` | 8 `variable-alpha` | `hasThreshold` | 0 | the wave, n ≥ 1 |
+| `0x00100008` | 8 `variable-alpha` | none | 0 | the wave, n = 0 |
+| `0x00000001` | 1 `alpha` | none | 0, index 0 | every builder when its count is 0 |
+
+Below, `v0 →(d, cN)→ v1` is one segment (§2.1); c1 is curve 1 `(0.33, 0, 0.67, 1)`, c0 is
+linear (§3.2). Times are effect seconds from the start of the loop phase; every list holds
+its last value.
+
+**Intro and outro.**
+
+`[BIN]` `vc_intro_outro_keyframes` (0x1A789EE64–0x1A789EEB4): one header `0x0010040A`,
+index 0, start 0, on every layer with a threshold:
+
+| phase | keyframes | effect |
+|---|---|---|
+| 0, intro | `0 →(1/3, c1)→ 1` | each threshold layer fades from full to `a` |
+| 2, outro (any phase but 0) | `1 →(1/3, c1)→ 0` | back to full |
+
+`intro_duration` (0x1A789C824) and `outro_duration` (0x1A789CABC) return `1/3` (0x1A7960300)
+for kind 1 unconditionally.
+
+**Cumulative (style 0).**
+
+`[BIN]` `vc_cumulative_keyframes` (0x1A789EF08):
+
+- n ≤ 1 (0x1A789EF84–0x1A789EFFC): one list, start 0, header `0x00000001` index 0 for n = 0,
+  `0x06000008` index 1 for n = 1:
+  `a →(1/3, c1)→ 1 →(1/3, c0)→ 1 →(1/3, c1)→ a`.
+- n ≥ 2 (0x1A789F060–0x1A789F0DC): one header and one list per rank `k = i + 1`
+  (`i = 0 … n − 1`), header `0x06000008` index `k`, start `i · s`:
+  `a →(1/3, c1)→ 1 →(E − i·s, c0)→ 1 →(1/3, c1)→ a`, with
+  `s = 1/3` for n = 2, 3, else `s = 0.6666666269302368 / (n − 1)` (a FRECPE/FRECPS
+  reciprocal); `E = 0.6666666865348816` for n = 2, else `1.0`.
+
+`[INF]` (arithmetic on the lists.) Rank `k` lights over 1/3 s from `(k − 1) · s`; every rank
+holds lit; **all fade together** over `[E + 1/3, E + 2/3]`. The cycle is `E + 2/3`: 1.0
+(n = 1), 4/3 (n = 2), 5/3 (n ≥ 3).
+
+**Cumulative reversing (style 1).**
+
+`[BIN]` `vc_cumulative_bounce_keyframes` (0x1A789F10C): n ≤ 1 as cumulative
+(0x1A789F184–0x1A789F200). n ≥ 2 (0x1A789F248–0x1A789F2E0): the same `s`; rank `k = i + 1`,
+header `0x06000008` index `k`, start `i · s`:
+
+```
+a →(1/3, c1)→ 1 →(2s·(n − 1 − i) + 1/3, c0)→ 1 →(1/3, c1)→ a
+```
+
+`[INF]` Ranks light ascending at `(k − 1) · s` and fade **descending**: the last rank starts
+fading at `2/3 + s(n − 1)`, rank 1 last; rank `k` ends at `1 + 2s(n − 1) − (k − 1)s`. The
+cycle is `1 + 2s(n − 1)`: 1.0 (n = 1), 5/3 (n = 2), 7/3 (n ≥ 3).
+
+**Iterative (style 2).**
+
+`[BIN]` `vc_sequential_keyframes` (0x1A789F310). Its count is `N = n + 1` when
+`(opts & 0x10000040) == 0x10000000` (bit 28 set, bit 6 clear; 0x1A789F384–0x1A789F394), else
+`N = n`. All its headers are pushed back to back and share **one** value list
+(0x1A789F59C–0x1A789F5CC, §2.1):
+
+```
+a →(r, c1)→ 1 →(f, c1)→ a
+```
+
+- N ≤ 3 (0x1A789F3A0–0x1A789F434, 0x1A789F528–0x1A789F568): `r = f = 1/3`. Headers
+  `i = 0 … max(N, 1) − 1`, start `i/3`, word `0x06000008` index `i + 1`; with the bit-28
+  "+1", the last (`i = N − 1`) is `0x06000009` index 1. N = 0: word 1, index 0.
+- N > 3 (0x1A789F43C–0x1A789F4A0, loop 0x1A789F4C8–0x1A789F520):
+
+  ```
+  t = 1/3 + (2N − 8)/60      Dn = t + N/12      r = (1/9) / Dn      f = (4/3) · t / Dn
+  ```
+
+  headers `k = 1 … N`, start `(k − 1) · r`, word `0x06000008` index `k`; with the "+1", the
+  last (`k = N`) is `0x06000009` index 1.
+
+`[INF]` In natural units the form is a wave with step 1/12 s, rise 1/12 s and decay `t`, and
+the whole cycle is compressed to **exactly 4/3 s** (factor `(4/3)/Dn`). For N ≤ 3 the step,
+rise and decay are 1/3 and the cycle is `(N + 1)/3`. The bit-28 extra track re-lights rank 1
+(through `max`) one step after the last rank: the wave wraps to its start.
+
+**The wave (style 2 with bit 6).**
+
+`[BIN]` `Animation::description` (0x1A789E5D4, kind 1 at 0x1A789E718–0x1A789E764) sets
+option bit 6 for style 2 when bit 28 is set and the repeat delay is not positive (§6.2's
+gap, below). With bit 6, `vc_sequential_keyframes` pushes a single header `0x00100408`
+(the qword at 0x1A7960C48; `0x00100008` when N = 0), index 0, start 0, on the same list,
+with `N = n`, so `r` and `f` as above; every threshold layer gets it. `apply`
+(0x1A789D218, 0x1A789D2C4) rebuilds the keyframes per layer at that layer's own local time,
+and `local_time` subtracts `layer_delay` after the intro (§6.2 step 4). Kind 1's
+`layer_delay` (0x1A789CD28–0x1A789CE34) is 0 when the rank is −1, else
+
+```
+layer_delay(k) = k · 1/3                                   n ≤ 3
+               = k · (1/9) / (n/12 + 1/3 + (2n − 8)/60)    n > 3
+```
+
+with `k` the rank `layer[+0x58]` and `n = glyph_info[+0x1D4]`, and no style or direction
+test. `[INF]` Its constants are read from the decompiler (0.33333, 0.083333, 0.016667,
+0.11111); that they are the same pool words as `vc_sequential_keyframes`' is not read in
+this function's assembly.
+
+`[INF]` So bit 6 turns iterative into a continuous wave: one shared track (step `r`, rise
+`r`, decay `f`), rank `k` delayed by `k · r`, period `n · r`. When `f > (n − 1) · r` the
+track is longer than the period and each cycle cuts its decay short: n = 1, 4 and 5 (n = 4:
+track 0.8333, period 0.6667). The model's reading: the rank delay counts from the end of the
+intro, which runs undelayed on every threshold layer, and before its delay a rank holds `a`.
+
+**Iterative reversing (style 3).**
+
+`[BIN]` `vc_sequential_bounce_keyframes` (0x1A789F600, read in assembly). Its count is
+`N = n + bit 28`, whatever bit 6 (0x1A789F680–0x1A789F684). On each list, with bit 28 the
+header of `i = N − 1` is `0x06000009` index 1 instead of `0x06000008` index `i + 1`.
+
+- N ≤ 2 (0x1A789F698–0x1A789F748): two headers (one when N = 0, word 1, index 0), start 0:
+  - `i = 0`: `1 →(1/3, c1)→ a →(1/3, c1)→ 1`;
+  - `i = 1`: `a →(1/3, c1)→ 1 →(1/3, c1)→ a`.
+- N = 3 (0x1A789F754–0x1A789F884): three headers, `i = 2` starting at 1/3, the others at 0:
+  - `i = 0`: `1 →(1/3, c1)→ a →(2/3, c0)→ a →(1/3, c1)→ 1`;
+  - `i = 1`: `a →(1/3, c1)→ 1 →(1/3, c1)→ a →(1/3, c1)→ 1 →(1/3, c1)→ a`;
+  - `i = 2`: `a →(1/3, c1)→ 1 →(1/3, c1)→ a`.
+
+  Peaks at 0 (rank 1), 1/3 (2), 2/3 (3), 1 (2), 4/3 (1).
+- N > 3 (0x1A789F888–0x1A789FA50):
+
+  ```
+  t = 1/3 + (2N − 8)/60      Db = 2 · (t + (N − 2)/12)
+  s = (5/24) / Db            F = 2.5 · t / Db           h = (5/12) / Db
+  ```
+
+  header `i` (`0 … N − 1`) starts at `max(i − 1, 0) · s`:
+  - `i = 0`: `1 →(F, c1)→ a →(h·(N − 2), c0)→ a →(s, c1)→ 1`;
+  - `0 < i < N − 1`: `a →(s, c1)→ 1 →(F, c1)→ a →(h·(N − 2 − i), c0)→ a →(s, c1)→ 1 →(F, c1)→ a`;
+  - `i = N − 1`: `a →(s, c1)→ 1 →(F − s, c0)→ 1 →(F, c1)→ a`.
+
+`[INF]` In natural units: step 1/12, rise 1/12, decay `t`, hold `(N − 2 − i)/6`, compressed
+by `2.5 / Db`, so the cycle is **exactly 2.5 s**. Forward peaks fall at `i/12`; the last
+rank holds lit for `t − 1/12`, then decays while the wave runs back (the second peak of
+header `i` at `t + (2N − 3 − i)/12`). Rank 1 starts and ends the cycle lit, so cycles join.
+The intro leaves every threshold layer at `a`, so at the start of the loop rank 1 jumps from
+`a` to 1 (property 8 assigns).
+
+**No threshold: n = 0.**
+
+`[BIN]` With no layer carrying a threshold, each builder's list goes on header word 1
+(`alpha`, index 0, every layer), and the intro and outro reach no layer:
+
+| form | n = 0 |
 |---|---|
-| `0.30000001192092896` | 0x1A795E054 (the inactive alpha) |
-| `0.6666666865348816`, `0.6666666269302368` | 0x1A7960CC4 |
-| `0.3333333432674408`, `0.01666666753590107`, `0.0833333358168602`, `0.111111119389534` | — |
-| `1.3333333730697632`, `0.2083333432674408`, `0.4166666865348816` | — |
+| cumulative, cumulative reversing | `a →(1/3, c1)→ 1 →(1/3, c0)→ 1 →(1/3, c1)→ a`, D = 1 |
+| iterative | `a →(1/3, c1)→ 1 →(1/3, c1)→ a`, D = 2/3 |
+| iterative reversing | `1 →(1/3, c1)→ a →(1/3, c1)→ 1`, D = 2/3, gap 0 |
+| iterative reversing with bit 28 (N = 1) | two headers, `0x06000009` index 1 and `0x06000008` index 2, that reach no layer: nothing animates |
+| the wave | header `0x00100008` on the shared list, and `local_duration` gives `n/3 = 0` (below): a zero period |
 
-`[BIN]` Inactive layers are driven by `variable-alpha-fade` (10) toward `0.3`, or toward 0
-with option bit 29 (0x1A789D540–0x1A789D544). `layer_delay` (§4.6) also acts on kind 1, so
-the animated forms stagger by motion group through the clock. No `vc_*` function reads
-`drawReversesMotionGroups` (§4.5).
+`[INF]` The wave at n = 0 is degenerate; the model plays plain iterative there (word 1,
+D = 2/3).
 
-`[INF]` Name correspondence with the public options: `.iterative` ↔ `vc_sequential`,
-`.cumulative` ↔ `vc_cumulative`, `.reversing` ↔ the `_bounce` variants, the
-`dimInactiveLayers` / `hideInactiveLayers` pair ↔ bit 29 clear / set, and `vc_intro_outro`
-the start and stop transitions. None of these is read.
+**Durations.**
+
+`[BIN]` `Animation::local_duration`, kind 1 (0x1A789C60C–0x1A789C820), with
+`n = glyph_info[+0x1D4]`:
+
+| style | duration `D` | n = 1 | n = 2 | n = 3 | n ≥ 4 | addresses |
+|---|---|---|---|---|---|---|
+| 0 cumulative | `clamp(n, 1, 3) · 1/3 + 2/3` | 1 | 4/3 | 5/3 | 5/3 | 0x1A789C6F4–0x1A789C704 |
+| 1 cumulative reversing | `clamp(n, 1, 3) · 2/3 + 1/3` | 1 | 5/3 | 7/3 | 7/3 | 0x1A789C67C–0x1A789C704 |
+| 2 iterative, bit 6 clear | `(clamp(N, 1, 3) + 1)/3`, `N = n + bit 28` | 2/3 | 1 | 4/3 | 4/3 | 0x1A789C63C–0x1A789C658 |
+| 2 the wave, bit 6 | `n/3` for n ≤ 3 (0 for n = 0), else `(n/9) / (n/12 + 1/3 + (2n − 8)/60)` | 1/3 | 2/3 | 1 | 0.6667, 0.7092, 0.7407, 0.7650, 0.7843 (n = 4 … 8) | 0x1A789C70C–0x1A789C820 |
+| 3 iterative reversing | `N = n + bit 28`: N < 3 → 2/3; N = 3 → 4/3; N > 3 → 2.5 | 2/3 | 2/3 | 4/3 | 2.5 | 0x1A789C6D0–0x1A789C6EC |
+
+The n columns of style 2 and 3 are without bit 28; with it read them at `n + 1`. n = 0 reads
+as n = 1 except where the n = 0 table above says otherwise. `[INF]` Every value equals the
+end of the builder's last list (checked for n = 1 … 8); the wave's equals `n · r`.
+
+**Phases, repeat and gap.**
+
+`[BIN]` `Animation::description` gives kind 1 the word `opts | (0x606 & ~explicit)`: bits 1,
+2, 9 (intro) and 10 (outro) by default (0x1A789E718–0x1A789E764). Its **repeat gap**
+(description `+16` → `anim+0x20`, constructor 0x1A789C324–0x1A789C328):
+
+| form | gap |
+|---|---|
+| cumulative, cumulative reversing, iterative | 1/3 s |
+| iterative reversing | 0 |
+| the wave | 0 |
+
+`Animator::add_animation` (0x1A790FA50) passes `config[+0x18] > 0` to `description` and,
+when `config[+0x18]` is finite, overwrites the gap with it, clamped at 0
+(0x1A790FACC–0x1A790FAF0); the repeat count is `ceil(config[+0x14])`. `[INF]`
+`config[+0x18]` is `RBSymbolAnimationRepeatDelay` (the parser reads that key at
+0x1A78FBF40; the store is not traced). Bit 16 is never set for kind 1, so the
+delay-before-intro variant of `local_time` (0x1A789E15C) does not apply.
+
+`[BIN]` `local_time` (0x1A789E114, §6.2): `t · speed`; `t < 1/3` is the intro; then
+`t −= 1/3`; with bit 6, `t −= layer_delay`; with repeat, `period = D + speed · gap`, the
+local time is `t mod period` clamped to `D` (the gap holds the cycle's last values); the
+outro once `t > period · count`.
+
+**Timelines.**
+
+`[INF]` (arithmetic on the lists above.) Absolute effect seconds at speed 1, one cycle, intro
+included: every threshold layer first fades `1 → a` over `[0, 1/3]` on c1. `time:value`,
+joined by the segment's curve; `→` alone joins rise and decay instants.
+
+**n = 3**
+
+- cumulative (cycle 5/3, ends 2.0): k1 `0.3333:a → 0.6667:1 … 1.6667:1 → 2.0:a`; k2
+  `0.6667:a → 1.0:1 … → 2.0:a`; k3 `1.0:a → 1.3333:1 … → 2.0:a`.
+- cumulative reversing (cycle 7/3, ends 2.6667): k1 up 0.3333 → 0.6667, down 2.3333 →
+  2.6667; k2 up 0.6667 → 1.0, down 2.0 → 2.3333; k3 up 1.0 → 1.3333, down 1.6667 → 2.0.
+- iterative (cycle 4/3): k1 `0.3333:a → 0.6667:1 → 1.0:a`; k2 0.6667 → 1.0 → 1.3333; k3
+  1.0 → 1.3333 → 1.6667.
+- iterative, bit 28 with a positive repeat delay (N = 4, compressed: r = 1/6, f = 2/3): k1
+  0.3333 → 0.5 → 1.1667; k2 0.5 → 0.6667 → 1.3333; k3 0.6667 → 0.8333 → 1.5; the wrap
+  (`max` on k1) 0.8333 → 1.0 → 1.6667.
+- the wave (bit 28, no repeat delay; period 1.0 per layer, delay k/3): k1 0.6667 → 1.0 →
+  1.3333; k2 1.0 → 1.3333 → 1.6667; k3 1.3333 → 1.6667 → 2.0; each repeats every 1.0 s.
+- iterative reversing (cycle 4/3): k1 `0.3333:1 → 0.6667:a … 1.3333:a → 1.6667:1`; k2
+  `0.3333:a → 0.6667:1 → 1.0:a → 1.3333:1 → 1.6667:a`; k3 `0.6667:a → 1.0:1 → 1.3333:a`.
+
+**n = 6**
+
+- cumulative (s = 0.1333): rank k rises from `0.3333 + (k − 1) · 0.1333` for 1/3 s (starts
+  0.3333, 0.4667, 0.6000, 0.7333, 0.8667, 1.0000); all fade 1.6667 → 2.0.
+- cumulative reversing: the same starts; the fades, descending, start at k6 1.6667, k5
+  1.8000, k4 1.9333, k3 2.0667, k2 2.2000, k1 2.3333, each 1/3 s, so the ends run 2.0 …
+  2.6667.
+- iterative (t = 0.4, Dn = 0.9, r = 0.123457, f = 0.592593): rank k rises at
+  `0.3333 + (k − 1) · 0.123457`, peaks `r` later, is back at `a` `f` after the peak; k1
+  0.3333 → 0.4568 → 1.0494 … k6 0.9506 → 1.0741 → 1.6667.
+- iterative, bit 28 with a positive repeat delay (N = 7, r = 0.109290, f = 0.568306): k1
+  0.3333 → 0.4426 → 1.0109 … k6 0.8798 → 0.9891 → 1.5574; the wrap on k1 0.9891 → 1.0984 →
+  1.6667.
+- the wave (period 0.740741 per layer, delay k · 0.123457): k1 0.4568 → 0.5802 → 1.1728; k2
+  0.5802 → 0.7037 → 1.2963; … k6 1.0741 → 1.1975 → 1.7901; each repeats every 0.740741 s.
+- iterative reversing (t = 0.4, Db = 1.4667, s = 0.142045, F = 0.681818, h = 0.284091):
+  - k1 `0.3333:1 → 1.0152:a … 2.1515:a → 2.2936:1`;
+  - k2 `0.3333:a → 0.4754:1 → 1.1572:a … 2.0095:a → 2.1515:1 → 2.8333:a`;
+  - k3 0.4754 → 0.6174 → 1.2992 … 1.8674 → 2.0095 → 2.6913;
+  - k4 0.6174 → 0.7595 → 1.4413 … 1.7254 → 1.8674 → 2.5492;
+  - k5 0.7595 → 0.9015 → 1.5833, then 1.5833 → 1.7254 → 2.4072;
+  - k6 `0.9015:a → 1.0436:1 … 1.5833:1 → 2.2652:a`.
+
+  The cycle ends at 2.8333 (1/3 + 2.5).
+
+**The model.**
+
+`[INF]` The model's `Spec` (§8.3) selects the form: `variableValue` present is the static
+form (§9.2–§9.4); absent, `vcFill` and `vcReversing` give the style and `vcInactive` bit 29
+(so `a`). Bit 28 is the drawing's `vcContinuous`. The model has no repeat delay, so bit 28
+with iterative and not reversing is always the wave, and iterative's `N = n + 1` form is
+not reached; iterative reversing takes `N = n + 1` with `vcContinuous`. `a` in hierarchical
+mode is the level-2 opacity of §2.7.
+
+- **Once**: the intro, one cycle, the gap, then the outro: a loop with count 1 (§6.3).
+- **Continuous**: the intro, then the cycle looping with period `D + speed · gap` in effect
+  seconds, as `local_time` computes it, so the gap lasts `gap` wall-clock seconds at any
+  speed while the cycle runs in `D / speed` (the wave: each rank on its own clock, delayed by
+  `k · r` from the end of the intro). Stopping finishes the current cycle (each rank its
+  own, in the wave) and plays the outro (§6.3).
+- Properties 8, 9 and 10 act on `vAlpha` (§2.3); motion groups, `byLayer` and
+  `drawReversesMotionGroups` do not apply.
+
+`[INF]` The outro's phase-2 keyframes are the property-10 fade track alone
+(`vc_intro_outro_keyframes`, above): nothing assigns `vAlpha` in that phase, so the fade starts
+from `vAlpha = 1` and sets every threshold layer to `a` at the outro's first instant, whatever
+value the cycle left it at. A layer that ends its cycle at `a` continues smoothly; a layer that
+ends it lit **drops to `a`** at the start of the outro, then fades to full. This happens in
+iterative reversing, whose rank 1 ends every cycle lit, and in the wave at n = 1, 4 and 5,
+whose cycle cuts its decay short so a rank ends above `a`, when the outro is played (once, or
+stopped). It is the same reasoning as the jump of iterative reversing's rank 1 from `a` to 1
+at the start of the loop.
 
 ### 9.6 The animated forms: what is open
 
-`[OBS]` **The timing of Variable Color's animated forms is not read.** To specify them, read
-in RenderBox 8.0.84 / `26A5416b`:
-
-1. the `push_keyframes` / `push_value` sequences of the five `vc_*` functions
-   (0x1A789EE64 … 0x1A789F600): property, header filter and index mode, values, durations,
-   curves, per layer or per group;
-2. kind 1's branch of `local_duration` (0x1A789C60C): the duration as a function of style
-   and layer count;
-3. kind 1's branch of `layer_delay` (0x1A789CCE0): its step (the Bounce/Wiggle formula of
-   §4.6 is read only for kinds 3 and 10) and which index it uses (motion group, or the
-   layer's threshold order);
-4. the handlers of `variable-alpha-max` (9, 0x1A789D6B0) and `variable-alpha-interpolant`
-   (11, 0x1A789D66C), and what `variable-alpha` (8) sets;
-5. in Symbols 204, `-[NSSymbolVariableColorEffect _rbOptionsMutable]`: how `.iterative`,
-   `.cumulative`, `.reversing`, `dimInactiveLayers`, `hideInactiveLayers` map onto option
-   bits, and which bit selects each `vc_*` builder in `Animation::keyframes` (0x1A789E39C);
-6. how the threshold ladder (§9.1) orders layers in those forms.
-
-Until then the model offers only the static forms (§9.2–§9.4).
+- `[OBS]` `Model[+0x60]` in the property-11 handler, and `Model::alpha(0)` (§2.3, §9.4).
+- `[OBS]` The selectors behind the threshold getter (stub 0x1A80E66C0) and the glyph's
+  symbol-defaults fallback for bit 28 in the options parser (§8.1).
+- `[OBS]` What the Swift and SwiftUI layer passes by default for `.variableColor` (fill
+  style, repeat count, repeat delay), and whether Symbols ever sets
+  `RBSymbolAnimationRepeatDelay` for it.
+- `[OBS]` How the outro is entered when a repeating Variable Color is removed (as for every
+  continuous effect, §6.2).
+- `[OBS]` Runtime confirmation of iterative reversing's jump of rank 1 from `a` to 1 at the
+  end of the intro.
+- `[OBS]` Runtime confirmation of the jump to `a` at the start of the outro of a layer that
+  ends its cycle lit or above `a` (iterative reversing; the wave at n = 1, 4, 5), §9.5.
+- `[INF]` `vc_cumulative_bounce_keyframes`' step literal and `layer_delay`'s literals are
+  read from the decompiler, not re-read in assembly (the other builders are).
 
 ## 10. Not effects
 
 - **Color**: no RenderBox kind (§5). A colour change is a paint change, outside this
   document. `[INF]`
 - **Kinds 7 and 8**: build no keyframes. `[OBS]`
-- **`scale-badge` outside Magic Replace**, **index mode 3**: not used by any effect above.
+- **`scale-badge` outside Magic Replace**: not used by any effect above.
 
 ## 11. Open questions
 
-- `[OBS]` Variable Color's animated forms (§9.6).
+- `[OBS]` Variable Color: `Model[+0x60]` and `Model::alpha(0)` in property 11, the Swift
+  layer's defaults, the outro on removal (§9.6).
 - `[OBS]` How a continuous effect enters its outro when stopped (§6.2); Pulse's repeat count
   as passed by Symbols (§6.5).
 - `[OBS]` Wiggle's direction vectors for `WiggleOptions` low part 2 and `WiggleAngle` (§7.4).
 - `[OBS]` The other RenderBox 8.0.84 build's Bounce rebound (§1.3).
 - `[OBS]` Magic Replace subtype 7's enclosure: drawn by both glyphs? (§7.10)
-- `[OBS]` Bits 0, 2, 5 of the default words (§8.2); index mode 3 (§2.2); kinds 7, 8.
-- `[OBS]` The continuous Variable Color band (§9.2) and variable draw (§9.3) in RenderBox.
+- `[OBS]` Bits 0, 2, 5 of the default words (§8.2); bits 1 and 2 of Variable Color's
+  description word (§9.5); kinds 7, 8.
+- `[OBS]` The continuous Variable Color band (§9.2), whether bit 28 changes the static
+  rendering, and variable draw (§9.3) in RenderBox.

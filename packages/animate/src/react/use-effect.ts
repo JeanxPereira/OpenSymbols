@@ -58,7 +58,11 @@ export function toSpec(e: EffectProps, ctx: { mode: RenderingMode; appearance: "
       s.drawReversedOrder = e.drawReversedOrder === true;
       break;
     case "variableColor":
+      // Present: a still frame at this value (07 §9.2); absent: the animated form the options shape (07 §9.5).
       if (e.variableValue !== undefined) s.variableValue = e.variableValue;
+      if (e.fill !== undefined) s.vcFill = e.fill;
+      if (e.reversing !== undefined) s.vcReversing = e.reversing;
+      if (e.inactive !== undefined) s.vcInactive = e.inactive;
       break;
   }
   return s;

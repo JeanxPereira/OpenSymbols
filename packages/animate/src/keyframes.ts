@@ -2,8 +2,8 @@ import { curve } from "./curves.js";
 
 /**
  * The layer properties a track drives (Docs/format/07 §2.3; RenderBox property id in brackets).
- * The variable-alpha family (8–11) belongs to Variable Color's animated forms, which are not
- * specified (07 §9.6), so it is not offered.
+ * The variable-alpha family (8–10) acts on a per-layer `vAlpha` that starts at 1 and multiplies
+ * the layer's alpha (07 §2.3, §9.5); 11 (`variable-alpha-interpolant`) is not offered.
  */
 export type Property =
   | "alpha" // 1: alpha *= v
@@ -13,6 +13,9 @@ export type Property =
   | "translation" // 5: offset += dir · v (07 §2.6)
   | "symbolRotation" // 6: symbolTurn += v (radians)
   | "layerRotation" // 7: layerTurn += v (radians)
+  | "variableAlpha" // 8: vAlpha = v
+  | "variableAlphaMax" // 9: vAlpha = max(vAlpha, v)
+  | "variableAlphaFade" // 10: vAlpha += (a − vAlpha) · v, a the inactive alpha (07 §9.5)
   | "pulseAlpha" // 12: alpha *= floor + (1 − floor) · v
   | "clipAlpha" // 13: alpha *= v; v ≤ 0 hides
   | "strokeStart" // 14: the clip start, or alpha *= 1 − v on a non-strokable layer
@@ -32,6 +35,8 @@ export const LAYER_FLAG = {
   badge: 0x4,
   enclosure: 0x8,
   stroke: 0x10,
+  /** A finite `variableThreshold` (07 §2.2, §9.5): the layer has a threshold rank. */
+  hasThreshold: 0x20,
   alwaysPulses: 0x40,
   alwaysRotates: 0x80,
   sourceSide: 0x100,
@@ -50,6 +55,8 @@ export const FILTER = {
   notStroke: { mask: 0x11, value: 0 },
   /** 07 §2.2 `notStroke` with the enclosure bit (+0x8): Magic Replace subtypes 6 and 7 (07 §7.10). */
   notStrokeOrEnclosure: { mask: 0x19, value: 0 },
+  /** Layers with a finite threshold (flag 0x20): Variable Color's intro, outro and wave (07 §9.5). */
+  hasThreshold: { mask: 0x20, value: 0x20 },
 } as const satisfies Record<string, Filter>;
 
 /** `from → to` over `duration` seconds on `curve` (07 §2.1). */
@@ -60,9 +67,10 @@ export interface Segment {
 }
 
 /**
- * A keyframe list (07 §2.1 "the model"): `{property, group, layer, filter, start, from, segments}`.
- * `group` (index mode 1, the compacted motion group, 07 §4.1) or `layer` (index mode 2) narrow
- * the layers reached; neither means every layer (mode 0).
+ * A keyframe list (07 §2.1 "the model"): `{property, group, layer, rank, filter, start, from, segments}`.
+ * `group` (index mode 1, the compacted motion group, 07 §4.1), `layer` (index mode 2) or `rank`
+ * (index mode 3, the threshold rank, 07 §2.2, §9.5) narrow the layers reached; none means every
+ * layer (mode 0).
  */
 export interface Track {
   property: Property;
@@ -71,6 +79,8 @@ export interface Track {
   segments: Segment[];
   group?: number;
   layer?: number;
+  /** Index mode 3: the layer's threshold rank (`AnimLayer.rank`, 1 … n) equals it. */
+  rank?: number;
   filter?: Filter;
   /** `scaleInterpolant` only: `[s, k]`, the origin and destination factors (07 §2.3, §7.6). */
   interp?: [number, number];
