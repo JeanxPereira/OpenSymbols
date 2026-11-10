@@ -1,5 +1,5 @@
 {
-  "name": "opensymbols",
+  "name": "@opensymbols/cli",
   "version": "0.1.0",
   "description": "Generate an icon package from your own SF Symbols catalog.",
   "keywords": [
@@ -22,11 +22,14 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
     "build": "tsup src/main.ts src/generate/assemble.ts --format esm --clean && node scripts/copy-demo.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
     "test": "vitest run",
-    "prepack": "node ../../scripts/check-pack.mjs --require-pnpm && pnpm --filter demo... build && pnpm --filter opensymbols... build && node ../../scripts/check-pack.mjs --package .",
+    "prepack": "node ../../scripts/check-pack.mjs --require-pnpm && pnpm --filter demo... build && pnpm --filter @opensymbols/cli... build && node ../../scripts/check-pack.mjs --package .",
     "prepublishOnly": "node ../../scripts/check-pack.mjs --require-pnpm"
   },
   "dependencies": {

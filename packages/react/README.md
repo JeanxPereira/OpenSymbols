@@ -17,11 +17,11 @@ React 19 or later. ESM only: use `import`.
 
 ## Use
 
-Generate your icon package first (`npx opensymbols generate --catalog DIR --out ./my-icons`),
-install it, then import each icon from its own module:
+Generate your icon package first (`npx @opensymbols/cli generate --catalog DIR --out ./my-icons`),
+install it, then import the icons by name:
 
 ```tsx
-import Wifi from "opensymbols-local/Wifi";
+import { Wifi } from "opensymbols";
 
 <Wifi size={32} weight="semibold" mode="hierarchical" color="#0a84ff" />
 ```

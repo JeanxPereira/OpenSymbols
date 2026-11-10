@@ -25,7 +25,7 @@ import { AssetCatalog } from "@opensymbols/decode";
 const catalog = AssetCatalog.open(readFileSync("/path/to/catalog-root/public/Assets.car"));
 ```
 
-Most people never import it: `npx opensymbols generate --catalog DIR --out ./my-icons` runs the
+Most people never import it: `npx @opensymbols/cli generate --catalog DIR --out ./my-icons` runs the
 whole pipeline. The catalog layout and the decoder's checks (`opensymbols gate`) are described in
 the README at the root of the OpenSymbols repository.
 

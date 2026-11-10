@@ -85,7 +85,7 @@ function main(argv: string[], env: Env, io: Io): number {
     if (values.out === undefined || values.out === "") throw new UsageError("generate needs --out DIR");
     const masters = values.masters ?? "all";
     if (masters !== "all" && masters !== "regular") throw new UsageError("--masters must be all or regular");
-    const packageName = values.name ?? "opensymbols-local";
+    const packageName = values.name ?? "opensymbols";
     if (packageName === "") throw new UsageError("--name must not be empty");
     const catalog = openCatalog(values.catalog, env);
     return generate(catalog, { out: values.out, packageName, masters }, io);

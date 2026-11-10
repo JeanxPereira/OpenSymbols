@@ -141,7 +141,7 @@ describe("opensymbols generate", () => {
   it("writes no chunks, and an installable package.json", () => {
     expect(existsSync(join(OUT, "chunks"))).toBe(false);
     expect(json(join(OUT, "package.json"))).toEqual({
-      name: "opensymbols-local",
+      name: "opensymbols",
       version: "0.0.0",
       private: true,
       type: "module",
@@ -161,7 +161,7 @@ describe("opensymbols generate", () => {
   it("deep imports resolve through the exports map", () => {
     // Self-reference: inside the package, its own name resolves through its exports.
     const script = [
-      'for (const s of ["opensymbols-local", "opensymbols-local/PlainCircle", "opensymbols-local/index.json", "opensymbols-local/symbols/PlainCircle.js"])',
+      'for (const s of ["opensymbols", "opensymbols/PlainCircle", "opensymbols/index.json", "opensymbols/symbols/PlainCircle.js"])',
       "  console.log(import.meta.resolve(s));",
     ].join("\n");
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], { cwd: OUT, encoding: "utf8" });
@@ -509,9 +509,9 @@ describe("opensymbols generate: the shared declaration type-checks through the e
   const tsc = resolve(import.meta.dirname, "..", "..", "..", "..", "node_modules", "typescript", "bin", "tsc");
   const consumer = [
     'import type { OpenSymbolIcon } from "@opensymbols/react";',
-    'import { PlainCircle, OldPlain } from "opensymbols-local";',
-    'import Deep from "opensymbols-local/PlainCircle";',
-    'import File from "opensymbols-local/symbols/PlainCircle.js";',
+    'import { PlainCircle, OldPlain } from "opensymbols";',
+    'import Deep from "opensymbols/PlainCircle";',
+    'import File from "opensymbols/symbols/PlainCircle.js";',
     "export const all: OpenSymbolIcon[] = [PlainCircle, OldPlain, Deep, File];",
     // Typed, not `any`: each of these is an error, which @ts-expect-error requires.
     "// @ts-expect-error",
@@ -536,7 +536,7 @@ describe("opensymbols generate: the shared declaration type-checks through the e
       const dir = `${OUT}-consumer-${resolution}`;
       outs.push(dir);
       mkdirSync(join(dir, "node_modules"), { recursive: true });
-      symlinkSync(OUT, join(dir, "node_modules", "opensymbols-local"), "junction");
+      symlinkSync(OUT, join(dir, "node_modules", "opensymbols"), "junction");
       writeFileSync(join(dir, "package.json"), JSON.stringify({ type: "module" }));
       writeFileSync(join(dir, "index.ts"), consumer);
       const compilerOptions = { strict: true, noEmit: true, module, moduleResolution: resolution, target: "es2022", types: [] };

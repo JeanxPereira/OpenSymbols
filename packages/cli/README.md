@@ -1,6 +1,6 @@
-# opensymbols
+# @opensymbols/cli
 
-The OpenSymbols command line: it builds an icon package of React components from your own copy
+The OpenSymbols command line (the `opensymbols` command): it builds an icon package of React components from your own copy
 of Apple's SF Symbols catalog.
 
 No Apple data ships in this package or in any `@opensymbols/*` package. You bring the catalog:
@@ -10,7 +10,7 @@ from your Mac and writes the icons into a package on your machine.
 ## Install
 
 ```sh
-npm install --save-dev opensymbols
+npm install --save-dev @opensymbols/cli
 ```
 
 Requires Node 22.12 or later.
@@ -18,9 +18,9 @@ Requires Node 22.12 or later.
 ## Use
 
 ```sh
-npx opensymbols generate --catalog /path/to/catalog-root --out ./my-icons
-npx opensymbols demo --package ./my-icons
-npx opensymbols --help
+npx @opensymbols/cli generate --catalog /path/to/catalog-root --out ./my-icons
+npx @opensymbols/cli demo --package ./my-icons
+npx @opensymbols/cli --help
 ```
 
 `--catalog` (or `$SF_CATALOG_DIR`) is a directory whose `public/` holds the contents of
@@ -33,7 +33,7 @@ npm install --install-links ./my-icons
 ```
 
 ```tsx
-import Wifi from "opensymbols-local/Wifi";
+import { Wifi } from "opensymbols";
 
 <Wifi size={32} weight="semibold" mode="hierarchical" />
 ```

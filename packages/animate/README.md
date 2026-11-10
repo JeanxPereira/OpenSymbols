@@ -21,7 +21,7 @@ effect:
 
 ```tsx
 import "@opensymbols/animate/react";
-import Bell from "opensymbols-local/Bell";
+import { Bell } from "opensymbols";
 
 <Bell effect={{ kind: "bounce", direction: "down" }} trigger={count} />
 ```
