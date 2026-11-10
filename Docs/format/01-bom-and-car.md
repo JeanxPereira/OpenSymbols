@@ -336,6 +336,8 @@ records (§6).
 | 1022 | vector — payload is a `DWAR` wrapper (§3.10) |
 | 1003 | measurement slot — `renditionLength = 0`, no payload bytes at all |
 | 9 | vector, in application catalogs — `DWAR` wrapping `%PDF`; not in CoreGlyphs |
+| 1004 | raster — `MLEC` pixels; 2,791 public renditions named `ZZZZPackedAsset-*` |
+| 12 | raster — `MLEC` pixels; the 2 renditions of `_gradient.highlegibility` |
 
 `[INF]` Classify by `renditionLength` and payload tag, not by layout alone: a rendition
 with `renditionLength = 0` has no payload, whatever its layout.
@@ -358,6 +360,17 @@ The payload's own magic says what it is:
 
 `[INF]` Check the magic; do not infer it from the layout. A payload tag other than `DWAR`
 is not a vector drawing.
+
+`[CAR]` Beside the vectors, the public catalog stores 2,793 renditions whose payload tag is
+`MLEC` (`CELM` byte-reversed) instead of `DWAR`: pixels, pre-rendered bitmaps of the
+symbols. All but two are layout 1004 and named `ZZZZPackedAsset-*`. They sit in the twelve key
+slots of the measurement renditions of §4 (GlyphWeight 4, Dimension2 {0,1,2} × GlyphSize
+{2,3} × Scale {1,2}; on `list.number`, twelve per Direction), with pixels where most
+symbols have no payload at all. `[INF]` A reader
+keeps them with no drawing and counts them apart: they are expected, not malformed records
+(§6). A facet whose renditions are all `MLEC` has nothing to draw: `[CAR]` that is
+`_gradient.highlegibility` (an internal facet, §3.4), the one public facet without a vector
+rendition. It is in `FACETKEYS` and counts among the 8,527 facets, but it is not a symbol.
 
 ## 4. A symbol's renditions, by example
 
@@ -394,7 +407,8 @@ Bold, Heavy, Black}`, so 1 = Ultralight, 4 = Regular, 9 = Black. The other six w
 are not stored; CoreUI interpolates them per point from the three masters
 (`CUIVectorGlyphMutator`), and refuses masters whose point counts differ ("CoreUI:
 Incompatible points when attempting to interpolate: Ultralight=%lu, Regular=%lu,
-Black=%lu").
+Black=%lu"). Points, not commands: the masters' commands differ, their points do not
+([03](03-bvg-paths-and-numbers.md) §7).
 
 `[OBS]` What are the interpolation scalars for the six intermediate weights?
 (`+[CUIVectorGlyphMutator _interpolationData]`, not read.)
@@ -406,15 +420,19 @@ non-zero values: **4 = a variant that only appears in left-to-right locales**, *
 variant that only appears in right-to-left locales**. 0 = no direction axis.
 
 `[CAR]` Carrying a Direction value is not the same as having a direction *variant*.
-Grouping every public facet by the **set** of Direction values its vector renditions
-carry:
+Grouping every public facet by the **set** of Direction values its Localization 0 vector
+renditions carry:
 
 | Direction set | facets | example | masters | has a direction variant |
 |---|---:|---|---:|---|
 | `{0}` | 7,696 | `0.circle` | 3 | no |
 | `{5}` | 696 | `airplane` | 3 | **no** — its only artwork is tagged 5 and serves both directions |
-| `{4, 5}` | 127 | `airtag.radiowaves.forward` | 6 | yes — a true left-to-right / right-to-left pair |
-| `{0, 4, 5}` | 7 | `cart.badge.questionmark` | 9 | yes — a base plus a true pair |
+| `{4, 5}` | 134 | `airtag.radiowaves.forward` | 6 | yes — a true left-to-right / right-to-left pair |
+
+`[CAR]` Over every localization, 7 of the 134 (`cart.badge.questionmark`, `list.number` and
+five more) also carry Direction 0, but only on a localized rendition: `list.number` has
+Direction 0 on its Arabic artwork (Localization 59797) and nowhere else. A resolver reads
+Localization 0 ([05](05-metadata.md) §4.4), so for it 0 is not one of their directions.
 
 So 134 public facets have a direction variant; a `{5}`-only facet has none, and a
 resolver that pinned Direction 0 could not draw it at all. The resolver rule is in
@@ -467,4 +485,5 @@ tree is skipped and counted, so one bad record does not hide the others. Zero re
 skipped on either `26A5416b` catalog `[CAR]`. `[INF]` The reader keeps the first 20 skipped
 records with their tree, entry index and reason, so a non-zero count can be traced.
 `[INF]` A rendition kept without metrics (§3.8) is not a skipped record and is not part of
-that count; the reader keeps a separate count and the first 20 reasons.
+that count; the reader keeps a separate count and the first 20 reasons. Nor is an `MLEC`
+raster (§3.10): it is counted apart.

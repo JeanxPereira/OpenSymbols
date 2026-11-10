@@ -275,17 +275,16 @@ describe("encodeSymbol", () => {
     expect(e.message).toContain('"extra"');
     expect(e.message).toContain("master 9");
     expect(e.message).toContain("layer 0");
-    expect(e.message).toContain("command 2");
+    expect(e.message).toContain("step 2");
   });
 
-  it("names the differing op when a master changes a command", () => {
-    const e = thrown(() => encode("op"));
-    expect(e).toBeInstanceOf(EncodeError);
-    expect(e.message).toContain('"op"');
-    expect(e.message).toContain("master 1");
-    expect(e.message).toContain("layer 0 command 1");
-    expect(e.message).toContain('"l"');
-    expect(e.message).toContain('"L"');
+  it("a master writing the same steps with other letters encodes, stored normalized (03 §7)", () => {
+    // master 1 is M 3 5 l 1 2 Z, the others M 3 5 L 1 2 Z: one step each, so compatible.
+    const v = encode("op").variants.a0d0!;
+    expect(v.ops).toBe("MLZ");
+    expect(v.argCounts).toEqual([2, 2, 0]);
+    expect(v.masters[1]!.args).toEqual([3, 5, 4, 7]);
+    expect(v.masters[4]!.args).toEqual([3, 5, 1, 2]);
   });
 
   it("resolves a multicolor systemBlueColor layer through the palette", () => {

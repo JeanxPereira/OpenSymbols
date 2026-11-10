@@ -69,6 +69,8 @@ export function generate(catalog: Catalog, opts: GenerateOptions, io: { err(text
       localized.push({ name: entry.name, base: entry.localizedVariantOf });
       continue;
     }
+    // Docs/format/01 §3.10: a facet of pixels only is not a symbol; nothing to generate.
+    if (!entry.drawable) continue;
     const notes: string[] = [];
     try {
       const data = encodeSymbol(catalog, entry, {

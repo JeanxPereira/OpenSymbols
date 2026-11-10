@@ -352,3 +352,34 @@ A decoded path is a list of `(letter, values)` commands in SVG terms; the letter
 of §3.2 and the values are the operands in order. Values are doubles. Nothing here
 transforms coordinates: they are in the path space inside `<g id="s">`
 ([06](06-drawing.md) §2).
+
+## 7. Point compatibility of masters
+
+A symbol's three masters (GlyphWeight 1, 4, 9; [01](01-bom-and-car.md) §5.2) interpolate
+point by point. `[BIN]` CoreUI counts **points**: its refusal reads "Incompatible points when
+attempting to interpolate: Ultralight=%lu, Regular=%lu, Black=%lu".
+
+`[CAR]` The **commands** of the three masters do not line up. The encoder packs, shortens and
+makes relative the same steps differently per master. On `zzz`, master 1 draws a rounded
+corner as `c 15 0 23 -9 23 -23` followed by `s -8 -23 -23 -23`; master 4 draws the same two
+cubics as one `c` carrying twelve values. Over the 7,419 (symbol, Direction, Appearance)
+groups of the public catalog that have all three masters, 6,364 differ in their command
+lists, and none differs once the paths are normalized as below.
+
+**Normalizing a path.** One command per step, every step absolute, only `M L Q C Z`:
+
+1. Split a command whose values hold several steps (§3.5) into one command per step, with
+   the op's arity of [06](06-drawing.md) §3.5. A command with no values has no step and
+   disappears.
+2. Resolve relative steps against the current point. The current point is the end of the
+   previous step; after `Z` it is the start of the subpath, the point of its `M`.
+3. The steps after the first of an `M` are `L` (SVG 1.1 §8.3.2).
+4. `H x` becomes `L x y` and `V y` becomes `L x y`, with the other coordinate taken from
+   the current point.
+5. `S` becomes `C` and `T` becomes `Q`. The first control point is the previous step's
+   last control point reflected about the current point when the previous step was a cubic
+   (for `S`) or a quadratic (for `T`). Otherwise it is the current point.
+
+Two masters are compatible when they have the same number of layers and, layer by layer,
+the same sequence of op letters after normalizing. Interpolation then mixes the values
+step by step.

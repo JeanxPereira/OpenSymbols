@@ -74,6 +74,11 @@ export interface SkipCounts {
    * dropped record, so not part of any skip total; the reasons are in `metricsNotes`.
    */
   metrics: number;
+  /**
+   * Kept renditions whose payload is `MLEC` pixels (Docs/format/01 §3.10): the pre-rendered
+   * bitmaps a catalog stores beside the vectors. Expected, so not part of any skip total.
+   */
+  raster: number;
 }
 
 /** How many skip records are kept with their reasons; the counters count them all. */
@@ -85,9 +90,10 @@ export class AssetCatalog {
    * truncated attribute list or a duplicate name (§3.4); bad renditions; id-tree entries
    * (`LOCALIZATIONKEYS`, `APPEARANCEKEYS`) whose value is shorter than a u16 (§3.5).
    * `nonVector` counts renditions kept with a null payload although `renditionLength > 0`
-   * (payload tag is not DWAR, §3.10); a layout-1003 slot is not counted.
+   * (payload tag is neither DWAR nor MLEC, §3.10); a layout-1003 slot is not counted, and an
+   * MLEC payload is counted in `raster`.
    */
-  readonly skipped: SkipCounts = { facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0 };
+  readonly skipped: SkipCounts = { facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0, raster: 0 };
 
   readonly #skipRecords: SkipRecord[] = [];
   readonly #metricsNotes: SkipRecord[] = [];
@@ -242,6 +248,7 @@ export class AssetCatalog {
         list = [];
         this.#renditions.set(id, list);
       }
+      if (csi.raster) this.skipped.raster++;
       if (csi.nonVector) {
         this.#skip("nonVector", tree, index, `"${csi.name}": payload tag is not DWAR (§3.10)`);
       }
@@ -329,7 +336,7 @@ function readKeyFormat(store: BomStore): number[] {
  */
 function readCsi(
   value: Uint8Array,
-): (Omit<Rendition, "key"> & { nonVector: boolean; metricsReason?: string }) | string {
+): (Omit<Rendition, "key"> & { nonVector: boolean; raster: boolean; metricsReason?: string }) | string {
   if (value.length < CSI_HEADER_LENGTH) {
     return `csiheader value of ${value.length} bytes, shorter than ${CSI_HEADER_LENGTH}`;
   }
@@ -389,14 +396,19 @@ function readCsi(
   if (metricsReason !== undefined) extra.metricsReason = metricsReason;
 
   // Docs/format/01 §3.9: renditionLength 0 means no payload, whatever the layout.
-  if (renditionLength === 0) return { layout, name, payload: null, nonVector: false, ...extra };
+  if (renditionLength === 0) return { layout, name, payload: null, nonVector: false, raster: false, ...extra };
 
   // §3.8: the payload starts at 184 + tlvLength, not at 184.
   const start = CSI_HEADER_LENGTH + tlvLength;
   if (start + 4 > value.length) return `"${name}": payload starts past the value's end`;
-  if (latin1(value.subarray(start, start + 4)) !== "DWAR") {
+  const payloadTag = latin1(value.subarray(start, start + 4));
+  if (payloadTag === "MLEC") {
+    // §3.10: pixels, not a drawing; expected beside the vectors.
+    return { layout, name, payload: null, nonVector: false, raster: true, ...extra };
+  }
+  if (payloadTag !== "DWAR") {
     // §3.10: a payload tag other than DWAR is not a vector drawing.
-    return { layout, name, payload: null, nonVector: true, ...extra };
+    return { layout, name, payload: null, nonVector: true, raster: false, ...extra };
   }
   if (start + DWAR_HEADER_LENGTH > value.length) return `"${name}": DWAR header truncated`;
   const dr = new ByteReader(value, start + 8);
@@ -409,6 +421,7 @@ function readCsi(
     name,
     payload: value.subarray(start + DWAR_HEADER_LENGTH, start + DWAR_HEADER_LENGTH + length),
     nonVector: false,
+    raster: false,
     ...extra,
   };
 }

@@ -33,6 +33,11 @@ export interface SymbolEntry {
    * it has more than one member, else `[]`.
    */
   variants: { appearance: number[]; direction: number[] };
+  /**
+   * The facet has at least one vector rendition (Docs/format/01 §3.10). A facet of pixels only,
+   * such as `_gradient.highlegibility`, is in the catalog but is not a symbol to draw.
+   */
+  drawable: boolean;
 }
 
 /** `AppMetadata` (Docs/format/05 §3) as `Catalog` exposes it: read-only. */
@@ -84,8 +89,12 @@ export class Catalog {
     for (const [name, identifier] of facets) {
       const directions = new Set<number>();
       const appearances = new Set<number>();
+      let drawable = false;
       for (const r of car.renditions(identifier)) {
         if (r.payload === null) continue;
+        drawable = true;
+        // Only what the pick can reach (05 §4.4): a localization's own direction is not a variant.
+        if ((r.key[Token.Localization] ?? 0) !== 0) continue;
         directions.add(r.key[Token.Direction] ?? 0);
         appearances.add(r.key[Token.Appearance] ?? 0);
       }
@@ -99,6 +108,7 @@ export class Catalog {
           appearance: appearances.size > 1 ? sorted(appearances) : [],
           direction: directions.has(4) && directions.has(5) ? sorted(directions) : [],
         },
+        drawable,
       };
       const year = meta.availability.get(name);
       if (year !== undefined) entry.year = year;

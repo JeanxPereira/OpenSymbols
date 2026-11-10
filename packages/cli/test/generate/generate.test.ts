@@ -66,7 +66,7 @@ describe("opensymbols generate", () => {
     expect(r.err).toMatch(/more than 1%/);
     // The group line says what; each symbol line says only the rest.
     expect(r.err).toContain("  master 9 is not point-compatible with master 4 (1):\n");
-    expect(r.err).toContain('    bad.masters: variant a0d0: layer 0 command 2: op "L", master 4 has "Z"\n');
+    expect(r.err).toContain('    bad.masters: variant a0d0: layer 0 step 2: "L", master 4 has "Z"\n');
     expect(existsSync(join(OUT, "index.json"))).toBe(true);
   });
 

@@ -124,6 +124,22 @@ describe("AssetCatalog", () => {
     expect(cat.skipped.nonVector).toBe(1);
   });
 
+  it("keeps an MLEC payload (pixels) as a raster with a null payload, not as a skip (§3.10)", () => {
+    const cat = AssetCatalog.open(
+      buildCar({
+        facets: { a: 1 },
+        renditions: [
+          { key: { 17: 1 }, layout: 1004, rawPayload: ascii("MLEC\0\0\0\0") },
+          wifi(1, { key: { 17: 1 } }),
+        ],
+      }),
+    );
+    expect(cat.renditions(1)).toHaveLength(2);
+    expect(cat.renditions(1)[0]!.payload).toBeNull();
+    expect(cat.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0, raster: 1 });
+    expect(cat.skipRecords).toEqual([]);
+  });
+
   it("does not count a layout 1003 slot as non-vector", () => {
     const cat = AssetCatalog.open(
       buildCar({
@@ -131,7 +147,7 @@ describe("AssetCatalog", () => {
         renditions: [{ key: { 17: 1 }, layout: 1003, payload: null }, wifi(1, { key: { 17: 1 } })],
       }),
     );
-    expect(cat.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0 });
+    expect(cat.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0, raster: 0 });
   });
 
   it("skips and counts facets without an identifier, and keeps the first of two", () => {

@@ -110,6 +110,11 @@ function main(argv: string[], env: Env, io: Io): number {
       for (const n of r.metricsNotes) io.err(`note: no metrics ${n.tree}[${n.index}]: ${n.reason}\n`);
       io.err(`note: metricsMissing=${r.metricsMissing} (renditions kept without glyph metrics)\n`);
     }
+    if (r.notDrawable.length > 0) {
+      io.err(`note: notDrawable=${r.notDrawable.length} (facets without a vector rendition: ${r.notDrawable.join(", ")})
+`);
+    }
+    if (r.raster > 0) io.err(`note: raster=${r.raster} (MLEC bitmaps beside the vectors, not drawn)\n`);
     io.err(`note: localized=${r.localized} (localized facets are not master-checked)\n`);
     io.out(
       `documents=${r.documents} failures=${r.failures.length} incompatible=${r.incompatibleMasters.length} skipped=${r.skipped}

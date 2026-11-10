@@ -25,7 +25,9 @@ describe.skipIf(!root)("opensymbols generate on the real catalog (SF_CATALOG_DIR
     expect(code).toBe(0);
     expect(index.build.validated).toBe(true);
     expect(index.localized).toHaveLength(1317);
-    expect(index.symbols).toHaveLength(8527 - 1317 - index.skipped.length);
+    // 8,527 facets: 1,317 localized and _gradient.highlegibility, which has no vector (01 §3.10).
+    expect(index.skipped).toEqual([]);
+    expect(index.symbols).toHaveLength(8527 - 1317 - 1);
 
     const Wifi = (await import(pathToFileURL(join(OUT, "symbols", "Wifi.js")).href)).default;
     for (const weight of ["ultralight", "regular", "black"] as const) {

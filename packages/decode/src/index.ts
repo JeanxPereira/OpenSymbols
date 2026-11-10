@@ -21,6 +21,7 @@ export {
   type PathCommand,
   type PathOp,
 } from "./bvg/path.js";
+export { normalizePath, pointShape } from "./bvg/normalize.js";
 export { decodeNumericList } from "./bvg/numeric-list.js";
 export { PREDEFINED, LOCAL_BASE } from "./bvg/atoms.js";
 export {

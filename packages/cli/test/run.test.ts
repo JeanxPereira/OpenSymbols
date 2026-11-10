@@ -121,6 +121,17 @@ describe("run exit codes", () => {
     expect(r.err).toMatch(/SKIPPED RENDITIONS\[3\]: .*not DWAR/);
   });
 
+  it("gate counts MLEC rasters in a note, not as skipped records (Docs/format/01 §3.10)", () => {
+    const root = writeCatalog("raster", [
+      ...masters(validDoc),
+      { key: { 17: 1, 26: 4, 7: 1 }, layout: 1004, rawPayload: new TextEncoder().encode("MLEC\0\0\0\0") },
+    ]);
+    const r = exec(["gate", "--catalog", root]);
+    expect(r.out).toBe("documents=3 failures=0 incompatible=0 skipped=0\n");
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("note: raster=1 (MLEC bitmaps beside the vectors, not drawn)");
+  });
+
   it("gate prints a localized note, grouped failures and incompatible reasons", () => {
     const root = writeCatalog("grouped", [
       { key: { 17: 1, 26: 4 }, payload: new Uint8Array([1, 2, 3]) },

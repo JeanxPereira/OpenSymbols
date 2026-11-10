@@ -12,6 +12,7 @@ import {
 } from "@opensymbols/core";
 import {
   DecodeError,
+  normalizePath,
   type Catalog,
   type Drawing,
   type GlyphMetrics,
@@ -174,12 +175,18 @@ function encodeVariant(
   const drawings = new Map<Master, Drawing>([[4, regular]]);
   for (const m of MASTERS[opts.masters]) if (m !== 4) drawings.set(m, catalog.drawing(name, m, pick));
 
+  // Docs/format/03 section 7: masters line up step by step only once normalized; the stored
+  // commands may pack, shorten or make relative the same steps differently per master.
+  const steps = new Map<Master, PathCommand[][]>();
+  for (const [m, d] of drawings) steps.set(m, d.layers.map((l) => normalizePath(l.path)));
+  const regularSteps = steps.get(4) as PathCommand[][];
+
   let ops = "";
   const argCounts: number[] = [];
   const layers: LayerData[] = [];
-  for (const layer of regular.layers) {
+  for (const [i, layer] of regular.layers.entries()) {
     const start = argCounts.length;
-    for (const c of layer.path) {
+    for (const c of regularSteps[i] as PathCommand[]) {
       ops += c.op;
       argCounts.push(c.args.length);
     }
@@ -188,9 +195,10 @@ function encodeVariant(
 
   const masters: VariantData["masters"] = {};
   for (const [m, d] of drawings) {
-    if (m !== 4) checkCompatible(name, key, m, regular, d);
+    const own = steps.get(m) as PathCommand[][];
+    if (m !== 4) checkCompatible(name, key, m, regularSteps, own);
     const master: MasterData = {
-      args: d.layers.flatMap((l) => l.path.flatMap((c) => c.args.map(round3))),
+      args: own.flatMap((l) => l.flatMap((c) => c.args.map(round3))),
       viewBox: [...d.viewBox],
       transform: [...d.transform],
     };
@@ -251,30 +259,33 @@ function metricsOf(catalog: Catalog, name: string, m: Master, pick: PickOptions)
   }
 }
 
-/** Review Focus 1: a master whose commands differ from the regular's cannot be interpolated. */
-function checkCompatible(name: string, key: string, m: Master, regular: Drawing, other: Drawing): void {
+/** A master whose normalized steps differ from the regular's cannot be interpolated (03 section 7). */
+function checkCompatible(
+  name: string,
+  key: string,
+  m: Master,
+  regular: PathCommand[][],
+  other: PathCommand[][],
+): void {
   const fail = (what: string): never => {
     throw new EncodeError(
       name,
       `symbol "${name}" variant ${key}: master ${m} is not point-compatible with master 4: ${what}`,
     );
   };
-  if (other.layers.length !== regular.layers.length) {
-    fail(`${other.layers.length} layers, master 4 has ${regular.layers.length}`);
+  if (other.length !== regular.length) {
+    fail(`${other.length} layers, master 4 has ${regular.length}`);
   }
-  regular.layers.forEach((rl, i) => {
-    const ol = other.layers[i] as Layer;
-    const n = Math.max(rl.path.length, ol.path.length);
+  regular.forEach((rl, i) => {
+    const ol = other[i] as PathCommand[];
+    const n = Math.max(rl.length, ol.length);
     for (let j = 0; j < n; j++) {
-      const rc = rl.path[j];
-      const oc = ol.path[j];
-      const at = `layer ${i} command ${j}`;
-      if (rc === undefined) fail(`${at}: extra command "${(oc as PathCommand).op}" (master 4 ends at ${j})`);
+      const rc = rl[j];
+      const oc = ol[j];
+      const at = `layer ${i} step ${j}`;
+      if (rc === undefined) fail(`${at}: extra step "${(oc as PathCommand).op}" (master 4 ends at ${j})`);
       if (oc === undefined) fail(`${at}: missing; master 4 has "${rc!.op}" (master ${m} ends at ${j})`);
-      if (rc!.op !== oc!.op) fail(`${at}: op "${oc!.op}", master 4 has "${rc!.op}"`);
-      if (rc!.args.length !== oc!.args.length) {
-        fail(`${at} ("${rc!.op}"): ${oc!.args.length} arguments, master 4 has ${rc!.args.length}`);
-      }
+      if (rc!.op !== oc!.op) fail(`${at}: "${oc!.op}", master 4 has "${rc!.op}"`);
     }
   });
 }

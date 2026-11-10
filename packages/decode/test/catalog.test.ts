@@ -69,10 +69,28 @@ describe("Catalog (Docs/format/01 section 5.3, 05 section 4)", () => {
       }),
       bundleFiles,
     });
-    expect(c.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 1, idEntries: 0, metrics: 0 });
+    expect(c.skipped).toEqual({ facets: 0, renditions: 0, nonVector: 1, idEntries: 0, metrics: 0, raster: 0 });
     c.skipped.nonVector = 99;
     expect(c.skipped.nonVector).toBe(1);
-    expect(catalog().skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0 });
+    expect(catalog().skipped).toEqual({ facets: 0, renditions: 0, nonVector: 0, idEntries: 0, metrics: 0, raster: 0 });
+  });
+
+  it("marks a facet drawable only when it has a vector rendition (01 §3.10)", () => {
+    const c = Catalog.open({
+      car: buildCar({
+        keyFormat: KEY_FORMAT,
+        facets: { a: 1, pixels: 2 },
+        renditions: [
+          rend(1, 4, "a", {}),
+          // _gradient.highlegibility on 26A5416b: two MLEC renditions, no vector.
+          { key: { 17: 2 }, layout: 12, rawPayload: new TextEncoder().encode("MLEC\0\0\0\0") },
+        ],
+      }),
+      bundleFiles,
+    });
+    expect(byName(c, "a")?.drawable).toBe(true);
+    expect(byName(c, "pixels")?.drawable).toBe(false);
+    expect(c.symbols()).toHaveLength(2);
   });
 
   it("exposes a copy of the skip records with their reasons", () => {
@@ -118,19 +136,25 @@ describe("Catalog (Docs/format/01 section 5.3, 05 section 4)", () => {
     const pair = Catalog.open({
       car: buildCar({
         keyFormat: KEY_FORMAT,
-        facets: { a: 1, b: 2 },
+        facets: { a: 1, b: 2, c: 3 },
         renditions: [
           rend(1, 4, "ltr", { 4: 4 }),
           rend(1, 4, "rtl", { 4: 5 }),
           rend(2, 4, "base", { 4: 0 }),
           rend(2, 4, "l", { 4: 4 }),
           rend(2, 4, "r", { 4: 5 }),
+          // list.number on 26A5416b: direction 0 is stored only for a localization (ar).
+          rend(3, 4, "l", { 4: 4 }),
+          rend(3, 4, "r", { 4: 5 }),
+          rend(3, 4, "ar", { 4: 0, 13: 59797 }),
         ],
       }),
       bundleFiles,
     });
     expect(byName(pair, "a")?.variants.direction).toEqual([4, 5]);
     expect(byName(pair, "b")?.variants.direction).toEqual([0, 4, 5]);
+    // Variants are what the pick can reach: localization 0 only (05 §4.4).
+    expect(byName(pair, "c")?.variants.direction).toEqual([4, 5]);
     expect(label(pair, "a", 4)).toBe("ltr");
     expect(label(pair, "a", 4, { direction: 5 })).toBe("rtl");
     expect(label(pair, "b", 4)).toBe("base");

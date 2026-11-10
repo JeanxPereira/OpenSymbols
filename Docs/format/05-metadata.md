@@ -364,8 +364,10 @@ public bundle has **1,317** such facets; without the script rule, 27 `.zh` facet
 ### 4.4 Choosing among Direction and Appearance
 
 **The Direction set.** `[CAR]` A facet's *Direction set* is the set of Direction values on
-its vector renditions. Public facets have one of four sets ([01](01-bom-and-car.md) §5.3):
-`{0}` 7,696, `{5}` 696, `{4, 5}` 127, `{0, 4, 5}` 7.
+its vector renditions at Localization 0, the only ones a pick reads. Public facets have one
+of three sets ([01](01-bom-and-car.md) §5.3): `{0}` 7,696, `{5}` 696, `{4, 5}` 134. Counted
+over every localization, 7 of the 134 would read `{0, 4, 5}`, but their Direction 0 exists
+only on a localized rendition and cannot be picked.
 
 **Default selection.** `[INF]` When the caller does not ask for a Direction or Appearance,
 take the rendition with the **lowest (Direction, Appearance) pair** among those matching
@@ -374,7 +376,7 @@ take the rendition with the **lowest (Direction, Appearance) pair** among those 
 the caller fixes one or both, filter on them first; no match is an error naming the symbol
 and the key. Why:
 
-- `[CAR]` Pinning Direction 0 makes the 696 `{5}`-only public facets (and the 127 `{4, 5}`
+- `[CAR]` Pinning Direction 0 makes the 696 `{5}`-only public facets (and the 134 `{4, 5}`
   ones) undrawable, though each has exactly one artwork per direction it is shown in.
 - `[INF]` Choosing the first match would make the answer depend on `RENDITIONS` tree order,
   which nothing guarantees. `[CAR]` No two vector renditions on `26A5416b` share the full
@@ -386,7 +388,7 @@ and the key. Why:
 contains both 4 and 5** (134 public facets). A `{5}`-only facet has **no** variant: its one
 artwork is drawn in both directions. A symbol entry's `variants.direction` lists the
 Direction values a caller can choose between: the sorted set when the facet has a direction
-variant (`[4, 5]` or `[0, 4, 5]`), else `[]`. For a right-to-left request, pick 5 when the
+variant (`[4, 5]` on `26A5416b`), else `[]`. For a right-to-left request, pick 5 when the
 facet has a variant; otherwise use the default. For a left-to-right request, pick 4 when the
 facet has a variant; otherwise the default.
 

@@ -34,6 +34,19 @@ describe("runGate", () => {
     expect(r.incompatibleMasters.map((m) => m.name)).toEqual(["a"]);
   });
 
+  it("leaves a facet with no vector rendition out of the master check and names it", () => {
+    const car = buildCar({
+      keyFormat: [4, 7, 13, 17, 26],
+      facets: { a: 1 },
+      localizations: {},
+      appearances: {},
+      renditions: [{ key: { 17: 1 }, layout: 12, rawPayload: new TextEncoder().encode("MLEC\0\0\0\0") }],
+    });
+    const r = runGate(Catalog.open({ car, bundleFiles }));
+    expect(r.incompatibleMasters).toEqual([]);
+    expect(r.notDrawable).toEqual(["a"]);
+  });
+
   it("formats a DecodeError as where: message", () => {
     const bare = buildBvg({ typeCode: 0x11, root: { tag: 0 } });
     const car = buildCar({
@@ -81,7 +94,9 @@ describe("runGate", () => {
     });
     const r = runGate(Catalog.open({ car, bundleFiles }));
     expect(r.localized).toBe(1);
-    expect(r.incompatibleMasters.map((m) => m.name)).toEqual(["a"]);
+    // "a" itself has no rendition at all: not drawable, so not master-checked either.
+    expect(r.notDrawable).toEqual(["a"]);
+    expect(r.incompatibleMasters).toEqual([]);
   });
 
   it("reports a bad TLV as missing metrics, not as a skipped record", () => {
@@ -151,19 +166,23 @@ describe("sameShape / shapeMismatch", () => {
     expect(sameShape(base(), b)).toBe(false);
     expect(shapeMismatch(base(), b)).toBe("layer count 2 vs 1");
   });
-  it("rejects a differing command count", () => {
+  it("rejects a differing step count (Docs/format/03 §7)", () => {
     const b = drawing([["M", 2], ["L", 2]], [["M", 2], ["Z", 0]]);
     expect(sameShape(base(), b)).toBe(false);
-    expect(shapeMismatch(base(), b)).toBe("command count at layer 0: 3 vs 2");
+    expect(shapeMismatch(base(), b)).toBe("step count at layer 0: 3 vs 2");
   });
-  it("rejects a differing op at the same position", () => {
-    const b = drawing([["M", 2], ["C", 2], ["Z", 0]], [["M", 2], ["Z", 0]]);
+  it("rejects a differing step at the same position", () => {
+    const b = drawing([["M", 2], ["C", 6], ["Z", 0]], [["M", 2], ["Z", 0]]);
     expect(sameShape(base(), b)).toBe(false);
-    expect(shapeMismatch(base(), b)).toBe("op at layer 0 cmd 1: L vs C");
+    expect(shapeMismatch(base(), b)).toBe("step 1 at layer 0: L vs C");
   });
-  it("rejects a differing argument count", () => {
-    const b = drawing([["M", 2], ["L", 6], ["Z", 0]], [["M", 2], ["Z", 0]]);
-    expect(sameShape(base(), b)).toBe(false);
-    expect(shapeMismatch(base(), b)).toBe("args length at layer 0 cmd 1: 2 vs 6");
+  it("accepts the same steps written as other commands: packed, relative, H for L", () => {
+    const b = drawing([["m", 2], ["l", 2], ["Z", 0]], [["M", 2], ["Z", 0]]);
+    const c = drawing([["M", 2], ["H", 1], ["Z", 0]], [["M", 2], ["Z", 0]]);
+    const packed = drawing([["M", 2], ["L", 4], ["Z", 0]], [["M", 2], ["Z", 0]]);
+    const split = drawing([["M", 2], ["L", 2], ["L", 2], ["Z", 0]], [["M", 2], ["Z", 0]]);
+    expect(shapeMismatch(base(), b)).toBeUndefined();
+    expect(shapeMismatch(base(), c)).toBeUndefined();
+    expect(shapeMismatch(packed, split)).toBeUndefined();
   });
 });

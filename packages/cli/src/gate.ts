@@ -1,4 +1,5 @@
 import {
+  normalizePath,
   parseBvg,
   parseStyleBlock,
   buildDrawing,
@@ -30,6 +31,10 @@ export interface GateResult {
   skipped: number;
   /** The first skipped records with their reasons (Docs/format/01 §6). */
   skipRecords: SkipRecord[];
+  /** Facets with no vector rendition (Docs/format/01 §3.10): not symbols, not master-checked. */
+  notDrawable: string[];
+  /** MLEC bitmaps kept beside the vectors (Docs/format/01 §3.10): expected, not a skip. */
+  raster: number;
   /** Kept renditions without metrics (a bad TLV, 01 §3.8); not a skip, not part of `skipped`. */
   metricsMissing: number;
   /** The first of those, with their reasons. */
@@ -39,22 +44,18 @@ export interface GateResult {
 const MASTERS: readonly Master[] = [1, 4, 9];
 
 /**
- * Why two drawings are not point-compatible, or undefined when they are: equal layer counts,
- * and per layer equal command counts, op sequence and argument counts.
+ * Why two drawings are not point-compatible, or undefined when they are (Docs/format/03 §7):
+ * equal layer counts and, per layer, the same steps once both paths are normalized. Packing,
+ * relative or absolute letters and `H`/`V`/`S`/`T` shorthands do not matter; CoreUI counts points.
  */
 export function shapeMismatch(a: Drawing, b: Drawing): string | undefined {
   if (a.layers.length !== b.layers.length) return `layer count ${a.layers.length} vs ${b.layers.length}`;
   for (let i = 0; i < a.layers.length; i++) {
-    const pa = a.layers[i]!.path;
-    const pb = b.layers[i]!.path;
-    if (pa.length !== pb.length) return `command count at layer ${i}: ${pa.length} vs ${pb.length}`;
+    const pa = normalizePath(a.layers[i]!.path);
+    const pb = normalizePath(b.layers[i]!.path);
+    if (pa.length !== pb.length) return `step count at layer ${i}: ${pa.length} vs ${pb.length}`;
     for (let j = 0; j < pa.length; j++) {
-      const c = pa[j]!;
-      const d = pb[j]!;
-      if (c.op !== d.op) return `op at layer ${i} cmd ${j}: ${c.op} vs ${d.op}`;
-      if (c.args.length !== d.args.length) {
-        return `args length at layer ${i} cmd ${j}: ${c.args.length} vs ${d.args.length}`;
-      }
+      if (pa[j]!.op !== pb[j]!.op) return `step ${j} at layer ${i}: ${pa[j]!.op} vs ${pb[j]!.op}`;
     }
   }
   return undefined;
@@ -117,9 +118,11 @@ export function runGate(catalog: Catalog): GateResult {
     documents: 0,
     failures: [],
     incompatibleMasters: [],
+    notDrawable: [],
     localized: 0,
     skipped: s.facets + s.renditions + s.nonVector + s.idEntries,
     skipRecords: catalog.skipRecords,
+    raster: s.raster,
     metricsMissing: s.metrics,
     metricsNotes: catalog.metricsNotes,
   };
@@ -142,6 +145,10 @@ export function runGate(catalog: Catalog): GateResult {
   for (const entry of catalog.symbols()) {
     if (entry.localizedVariantOf !== undefined) {
       result.localized++;
+      continue;
+    }
+    if (!entry.drawable) {
+      result.notDrawable.push(entry.name);
       continue;
     }
     const appearances = entry.variants.appearance.length > 0 ? entry.variants.appearance : [undefined];
