@@ -361,6 +361,28 @@ bundle's `LOCALIZATIONKEYS` tags. The tags are BCP-47 and one carries a script s
 so a two-letter suffix also matches with `-Hans` or `-Hant` appended. Under this rule the
 public bundle has **1,317** such facets; without the script rule, 27 `.zh` facets are missed.
 
+**In a generated package** (the model's reading):
+
+- `[INF]` Each localized drawing is stored in its base symbol's `locales`, keyed by the
+  catalog's BCP-47 tag (`ar`, `hi`, `zh-Hans`), each tag holding its own variants keyed like
+  the base symbol's (`a<appearance>d<direction>`). Per tag, the token-13 renditions of the
+  base name come first; the `<name>.<suffix>` facet fills a tag only where they are absent,
+  the order of the two mechanisms above.
+- `[INF]` A `zh` facet is stored under `zh-Hans` and `zh-Hant` when the bundle's
+  `LOCALIZATIONKEYS` tags carry those, else under `zh`.
+- `[INF]` A `<name>.rtl` facet becomes its base symbol's Direction 5 variant
+  (`a<appearance>d5`) when the base symbol has none of its own; it is then the drawing a
+  right-to-left request picks (§4.4). `[CAR]` The public bundle has 132 `.rtl` facets; on
+  `26A5416b` every one of their base symbols already has its own Direction 5, so none of them
+  adds a drawing. Likewise every language facet repeats a Localization rendition of its base,
+  so the 1,615 localized drawings of a generated package all come from Localization renditions.
+- `[INF]` A localized or right-to-left facet is not a symbol of its own in the package:
+  `index.json` lists it with the base symbol and the locale or direction it became.
+- `[INF]` The runtime resolves a requested locale in steps: the exact tag (`zh-Hant`), then
+  its shorter prefixes and its language subtag (`zh-Hant-TW` → `zh-Hant`, `ar-EG` → `ar`), then
+  the first stored tag of that language in sorted order (`zh` → `zh-Hans`), then the base drawing. Within the
+  chosen set, Direction and Appearance are chosen as in §4.4.
+
 ### 4.4 Choosing among Direction and Appearance
 
 **The Direction set.** `[CAR]` A facet's *Direction set* is the set of Direction values on
@@ -389,7 +411,9 @@ contains both 4 and 5** (134 public facets). A `{5}`-only facet has **no** varia
 artwork is drawn in both directions. A symbol entry's `variants.direction` lists the
 Direction values a caller can choose between: the sorted set when the facet has a direction
 variant (`[4, 5]` on `26A5416b`), else `[]`. For a right-to-left request, pick 5 when the
-facet has a variant; otherwise use the default. For a left-to-right request, pick 4 when the
+facet has a variant; otherwise use the default. `[INF]` In a generated package a right-to-left
+request takes Direction 5 whenever the set stores one, which also covers a base that received
+its `.rtl` facet as Direction 5 (§4.3). For a left-to-right request, pick 4 when the
 facet has a variant; otherwise the default.
 
 **Appearance.** `[INF]` Likewise, `variants.appearance` is the sorted set of Appearance values

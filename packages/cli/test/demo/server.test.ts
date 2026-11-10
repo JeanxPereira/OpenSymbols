@@ -6,6 +6,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { run } from "../../src/run.js";
 import { runDemo } from "../../src/demo/cli.js";
 import { createDemoHandler, startDemoServer } from "../../src/demo/server.js";
+import { ChunkBuilder } from "../../src/demo/chunks.js";
+import { moduleSource } from "../../src/generate/module-source.js";
 
 const tmp = mkdtempSync(join(tmpdir(), "opensymbols-demo-"));
 const appDir = join(tmp, "app");
@@ -132,6 +134,74 @@ describe("host check and hardening", () => {
     rmSync(join(appDir, "gone.js"));
     expect((await get("/gone.js")).status).toBe(404);
     expect((await get("/")).status).toBe(200);
+  });
+});
+
+describe("chunks built from the modules (a format 2 package has none on disk)", () => {
+  const pkg2 = join(tmp, "pkg2");
+  const symbols = [
+    { name: "a", component: "A", chunk: 0 },
+    { name: "b", component: "B", chunk: 0 },
+    { name: "c", component: "C", chunk: 1 },
+  ];
+  const writeModule = (component: string, data: object) =>
+    writeFileSync(join(pkg2, "symbols", `${component}.js`), moduleSource(JSON.stringify(data)));
+  let s2: Awaited<ReturnType<typeof startDemoServer>>;
+  beforeAll(async () => {
+    mkdirSync(join(pkg2, "symbols"), { recursive: true });
+    writeFileSync(join(pkg2, "index.json"), JSON.stringify({ formatVersion: 2, symbols }));
+    for (const s of symbols) writeModule(s.component, { v: 2, name: s.name });
+    s2 = await startDemoServer({ packageDir: pkg2, appDir, host: "127.0.0.1", port: 0 });
+  });
+  afterAll(() => s2.close());
+  const get2 = (path: string, init?: RequestInit) => fetch(new URL(path, s2.url), init);
+
+  it("serves chunks/<n>.json: the modules' data of chunk n, in index order", async () => {
+    const r = await get2("/pkg/chunks/0.json");
+    expect(r.status).toBe(200);
+    expect(r.headers.get("content-type")).toContain("application/json");
+    expect(r.headers.get("cache-control")).toBe("no-cache");
+    expect(await r.json()).toEqual([
+      { v: 2, name: "a" },
+      { v: 2, name: "b" },
+    ]);
+    expect(await (await get2("/pkg/chunks/1.json")).json()).toEqual([{ v: 2, name: "c" }]);
+    const head = await get2("/pkg/chunks/1.json", { method: "HEAD" });
+    expect(head.status).toBe(200);
+    expect(Number(head.headers.get("content-length"))).toBeGreaterThan(0);
+  });
+
+  it("404s a chunk the index does not have and paths that are not chunks", async () => {
+    for (const p of ["/pkg/chunks/2.json", "/pkg/chunks/01.json", "/pkg/chunks/x.json", "/pkg/chunks/0.js"]) {
+      expect((await get2(p)).status).toBe(404);
+    }
+  });
+
+  it("keeps a built chunk until index.json changes, then builds it again", async () => {
+    await get2("/pkg/chunks/1.json");
+    writeModule("C", { v: 2, name: "c2" });
+    expect(await (await get2("/pkg/chunks/1.json")).json()).toEqual([{ v: 2, name: "c" }]);
+    const later = JSON.stringify({ formatVersion: 2, symbols, regenerated: true });
+    writeFileSync(join(pkg2, "index.json"), later);
+    expect(await (await get2("/pkg/chunks/1.json")).json()).toEqual([{ v: 2, name: "c2" }]);
+  });
+
+  it("answers 500 for a module that is not one generate writes, and keeps serving", async () => {
+    writeFileSync(join(pkg2, "symbols", "B.js"), "export default 1;\n");
+    writeFileSync(join(pkg2, "index.json"), JSON.stringify({ formatVersion: 2, symbols, again: true }));
+    expect((await get2("/pkg/chunks/0.json")).status).toBe(500);
+    expect((await get2("/pkg/chunks/1.json")).status).toBe(200);
+  });
+
+  it("refuses an index.json component that is not a module name", () => {
+    const evil = join(tmp, "pkg3");
+    mkdirSync(evil, { recursive: true });
+    writeFileSync(join(evil, "index.json"), JSON.stringify({ symbols: [{ component: "../../secret", chunk: 0 }] }));
+    expect(() => new ChunkBuilder(evil).chunk(0)).toThrow(/valid component/);
+  });
+
+  it("a format 1 package's chunk file on disk is served as is", async () => {
+    expect(await (await get("/pkg/chunks/0.json")).text()).toBe("[]");
   });
 });
 

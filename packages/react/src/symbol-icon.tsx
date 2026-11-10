@@ -10,12 +10,12 @@ import {
   type ForwardRefExoticComponent,
   type RefAttributes,
 } from "react";
-import { FORMAT_VERSION, buildSvg, type SymbolData } from "@opensymbols/core";
+import { buildSvg, decodeSymbol, type SymbolData, type SymbolWire } from "@opensymbols/core";
 import type { IconProps } from "./create-icon.js";
 import { effectsImpl } from "./effects.js";
 import { toChildren, toReact } from "./to-react.js";
 
-export type SymbolIconProps = IconProps & { data: SymbolData };
+export type SymbolIconProps = IconProps & { data: SymbolData | SymbolWire };
 
 const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
 
@@ -31,7 +31,7 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
   SymbolIconProps
 >(function SymbolIcon(props, forwardedRef) {
   const {
-    data,
+    data: wire,
     size = 24,
     weight = "regular",
     mode = "monochrome",
@@ -41,6 +41,8 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
     appearance = "light",
     layout = "box",
     direction = "auto",
+    scale = "medium",
+    locale,
     title,
     effect,
     trigger,
@@ -49,9 +51,8 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
     effectRef,
     ...rest
   } = props;
-  if (data.v !== FORMAT_VERSION) {
-    throw new TypeError(`Unsupported OpenSymbols data version ${String(data.v)} (expected ${FORMAT_VERSION})`);
-  }
+  // Format 2 is expanded once per data object; format 1 passes through; other versions throw.
+  const data = decodeSymbol(wire);
   // `width`/`height`/`viewBox` belong to the model.
   const { width: _w, height: _h, viewBox: _v, ...passthrough } = rest as Record<string, unknown>;
 
@@ -85,6 +86,8 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
     mode: data.modes.includes(mode) ? mode : "monochrome",
     appearance,
     direction: resolved,
+    scale,
+    locale,
     effect,
     trigger,
     hasTrigger: Object.hasOwn(props, "trigger"),
@@ -103,14 +106,16 @@ export const SymbolIcon: ForwardRefExoticComponent<SymbolIconProps & RefAttribut
         weight,
         layout,
         direction: resolved,
+        scale,
         idPrefix,
+        ...(locale !== undefined ? { locale } : {}),
         ...(palette !== undefined ? { palette } : {}),
         ...(variableValue !== undefined ? { variableValue } : {}),
         ...(title !== undefined ? { title } : {}),
       }),
     // `palette` is compared by content so an inline array does not rebuild every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, mode, color, appearance, size, weight, layout, resolved, idPrefix, palette?.join("|"), variableValue, title],
+    [data, mode, color, appearance, size, weight, layout, resolved, scale, locale, idPrefix, palette?.join("|"), variableValue, title],
   );
 
   const children = useMemo(() => toChildren(built.root), [built]);

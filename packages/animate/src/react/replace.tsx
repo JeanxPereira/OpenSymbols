@@ -63,7 +63,7 @@ export function Replace(props: ReplaceProps): ReactElement {
     }
     const direction = (el: SVGSVGElement): "ltr" | "rtl" =>
       icon.direction === "ltr" || icon.direction === "rtl" ? icon.direction : el.closest("[dir]")?.getAttribute("dir") === "rtl" ? "rtl" : "ltr";
-    const common = { weight: icon.weight ?? "regular", appearance: icon.appearance ?? "light" } as const;
+    const common = { weight: icon.weight ?? "regular", appearance: icon.appearance ?? "light", scale: icon.scale ?? "medium", locale: icon.locale } as const;
     const outD = drawingOf({ data: OutIcon.data, ...common, direction: direction(outEl) });
     const inD = drawingOf({ data: InIcon.data, ...common, direction: direction(inEl) });
     // Each icon is drawn in the requested mode, or monochrome when it lacks it (as `<SymbolIcon>`).

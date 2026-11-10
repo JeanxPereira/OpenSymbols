@@ -1,5 +1,5 @@
 import { forwardRef, type ForwardRefExoticComponent, type Ref, type RefAttributes, type SVGProps } from "react";
-import { FORMAT_VERSION, type RenderingMode, type SymbolData, type Weight } from "@opensymbols/core";
+import { decodeSymbol, type RenderingMode, type SymbolData, type SymbolWire, type Weight } from "@opensymbols/core";
 import type { EffectProps, SymbolHandle } from "./effects.js";
 import { SymbolIcon } from "./symbol-icon.js";
 
@@ -20,6 +20,18 @@ export interface IconProps extends Omit<SVGProps<SVGSVGElement>, "ref" | "color"
   appearance?: "light" | "dark";
   /** Default "box". */
   layout?: "box" | "text";
+  /**
+   * The symbol scale relative to the text it sits in (Docs/format/01 §5.4): Medium and Large draw
+   * the glyph 1.276 and 1.647 times Small and change its weight scalars. Default "medium", like
+   * SwiftUI's `imageScale`.
+   */
+  scale?: "small" | "medium" | "large";
+  /**
+   * A BCP-47 tag (`"ar"`, `"hi"`, `"zh-Hant"`) choosing a localized drawing when the symbol has
+   * one (Docs/format/05 §4.3): the exact tag, then its shorter prefixes and its language, then the
+   * first stored tag of that language (`"zh"` → `"zh-Hans"`), else the base drawing.
+   */
+  locale?: string;
   /**
    * `auto` (default) renders LTR, then follows the closest `[dir]` ancestor after mount. A `dir`
    * change after mount is not observed: pass `direction` or remount the icon.
@@ -51,10 +63,9 @@ export type OpenSymbolIcon = ForwardRefExoticComponent<IconProps & RefAttributes
 /**
  * Builds a React component for one generated symbol: a thin wrapper over `<SymbolIcon data>`.
  */
-export function createIcon(data: SymbolData): OpenSymbolIcon {
-  if (data.v !== FORMAT_VERSION) {
-    throw new TypeError(`Unsupported OpenSymbols data version ${String(data.v)} (expected ${FORMAT_VERSION})`);
-  }
+export function createIcon(wire: SymbolData | SymbolWire): OpenSymbolIcon {
+  // Format 2 is expanded once here; format 1 passes through; any other version throws.
+  const data = decodeSymbol(wire);
 
   const Icon = forwardRef<SVGSVGElement, IconProps>(function Icon(props, ref) {
     return <SymbolIcon {...props} data={data} ref={ref} />;

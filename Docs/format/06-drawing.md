@@ -475,7 +475,8 @@ characters is not a number.
 The glyph metrics, and the two points every effect turns and scales about
 ([07](07-effects.md) §2.5): the rotation anchor and the metric centre. Both points are
 stored in **path space** (the coordinates of the layers' `path`, before `transform`),
-where an effect's per-layer transform acts.
+where an effect's per-layer transform acts. All of them are stored per master and follow
+the weight and the symbol scale (§9.4).
 
 ### 9.1 Glyph metrics
 
@@ -588,3 +589,47 @@ and baseline are measured up from its bottom edge.
 Worked example `[INF]`: viewBox `[0 0 20 20]`, `transform = (0.01 0 0 0.01 −1 18)`,
 `leftInset = rightInset = 1`, `capHeight = 14`, `baselineOffset = 2`: `x_vb = (1 + 20 +
 1)/2 − 1 = 10`, `yUp = 7 + 2 = 9`, `y_vb = 20 − 9 = 11`, path `(1100, −700)`.
+
+### 9.4 Under weight and scale
+
+**What Apple does.** `[BIN] CoreUI 26A5416b` ([01](01-bom-and-car.md) §5.2, §5.4) The
+canvas size, the alignment-rect insets, the anchor, the baseline offset and the cap height
+are each mixed from the three masters with the same pair `(x, y)` as the path, the pair for
+the requested (weight, size):
+
+```
+q = q_R + x·(q_UL − q_R) + y·(q_B − q_R)
+```
+
+Then the size scale S (1.0 Small, 1.276 Medium, 1.647 Large) multiplies the path, the canvas
+size, the insets and the anchor; the baseline offset becomes `S·b + K·(S − 1)·X`
+(`K = 0.352294921875`); the cap height is not scaled.
+
+**The model.** For a weight on the 1..9 scale and a symbol scale small, medium or large:
+
+1. `[INF]` The pair is the table's for that weight in the row S = 1.0, 1.276 or 1.647; a
+   fractional weight blends the pairs of its two neighbouring weights, and nothing is
+   clamped ([01](01-bom-and-car.md) §5.2).
+2. `[INF]` The same pair mixes the path's values, the viewBox width and height (CoreUI's
+   canvas size), `leftInset`, `rightInset`, `baselineOffset`, `capHeight` and the rotation
+   anchor (CoreUI's anchor).
+3. `[INF]` The drawing, the viewBox width and height, both insets and the rotation anchor are
+   scaled by S together, about the master's origin. Scaling a drawing and its viewBox
+   together enlarges the same picture: in a viewBox the result does not depend on which
+   corner the origin is.
+4. `[INF]` `baselineOffset' = S·baselineOffset + K·(S − 1)·referencePointSize`, with
+   `referencePointSize` standing for CoreUI's `X`; `capHeight` keeps its mixed value.
+5. `[INF]` The metric centre is computed by §9.3 from the mixed and scaled values. Where
+   `capHeight/2` equals `K·referencePointSize` (1,443 of 2,048 units, §9.1),
+   `capHeight/2 + baselineOffset'` equals `S·(capHeight/2 + baselineOffset)`: the centre
+   lands where the scale put the cap-height midline.
+
+Worked example `[INF]`, `wifi` at Semibold, medium: pair (0.12263442816150573,
+0.2914169278996865); viewBox width mixed 11.506238 from 10.968744, 11.30517 and 12.136713,
+then × 1.276 = 14.681960.
+
+`[OBS]` Whether CoreUI's anchor method reads the rotation anchor or the metric centre, and
+whether the document `transform` is mixed across masters, are not read
+([01](01-bom-and-car.md) §5.2). `[OBS]` How stroke width and the draw-attachment data
+follow the weight (`_interpolatedStrokeWidthWithWeight:…`,
+`_createInterpolatedDrawAttachmentDataStoreWithWeight:…`) is not read.

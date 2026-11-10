@@ -588,7 +588,8 @@ describe("disappear (07 §7.7)", () => {
 
 // ---- Review Focus 1: the stagger always fits ----------------------------------------------
 
-describe("the stagger always fits (07 §4.7, Review Focus 1)", () => {
+// Sweeps every group count for every effect: seconds alone, longer beside the real-catalog tests.
+describe("the stagger always fits (07 §4.7, Review Focus 1)", { timeout: 60_000 }, () => {
   const TOTAL: Record<string, number> = {
     bounce: 0.7,
     pulse: 2,

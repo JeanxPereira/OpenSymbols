@@ -1,6 +1,5 @@
 // One SF Symbol → `SymbolData` (packages/core/src/format.ts), the generated-data contract.
 import {
-  FORMAT_VERSION,
   type LayerData,
   type LayerStyleData,
   type MasterData,
@@ -22,6 +21,7 @@ import {
   type PathCommand,
   type PickOptions,
   type SymbolEntry,
+  type VariantAxes,
 } from "@opensymbols/decode";
 import { EncodeError } from "../errors.js";
 
@@ -42,6 +42,12 @@ export interface EncodeOptions {
   palette: Palette;
   /** The catalog is the reference build (fingerprint.ts); written as `SymbolData.build.validated`. */
   validated: boolean;
+  /**
+   * Filled, when given, with what each facet of `LocalizedSources` became: the locale tags it was
+   * written as, `["rtl"]` for an `.rtl` facet written as the Direction 5 variants, or `[]` when the
+   * symbol has its own drawing for all of them.
+   */
+  became?: Map<string, string[]>;
   /**
    * Non-fatal notes are pushed here when given: an appearance that is neither 0 nor dark, a
    * (direction, appearance) pair with no rendition, a colour the palette does not name.
@@ -65,11 +71,6 @@ export function round3(n: number): number {
   return r === 0 ? 0 : r;
 }
 
-interface Pair {
-  direction: number | undefined;
-  appearance: number | undefined;
-}
-
 /** Per-symbol encoding state: the palette, and whether any colour fell back to a stand-in. */
 interface Ctx {
   name: string;
@@ -78,48 +79,85 @@ interface Ctx {
   standIn: boolean;
   /** Colours already warned about, so a colour used on many layers warns once. */
   missing: Set<string>;
+  darkId: number | undefined;
+  appearanceName: Map<number, string>;
 }
 
-export function encodeSymbol(catalog: Catalog, entry: SymbolEntry, opts: EncodeOptions): SymbolData {
+/** A symbol's localized facets (Docs/format/05 §4.3), as `generate` found them in the catalog. */
+export interface LocalizedSources {
+  /** `<name>.<suffix>` facets, each with the catalog tags it stands for (`zh` → `zh-Hans`, `zh-Hant`). */
+  facets: ReadonlyArray<{ entry: SymbolEntry; tags: readonly string[] }>;
+  /** The `<name>.rtl` facet, if any. */
+  rtl?: SymbolEntry;
+}
+
+export function encodeSymbol(
+  catalog: Catalog,
+  entry: SymbolEntry,
+  opts: EncodeOptions,
+  localized?: LocalizedSources,
+): SymbolData {
   const name = entry.name;
-  const darkId = darkAppearance(catalog);
-  const appearanceName = new Map([...catalog.appearances()].map(([n, id]) => [id, n]));
+  const ctx: Ctx = {
+    name,
+    palette: opts.palette,
+    warnings: opts.warnings,
+    standIn: false,
+    missing: new Set(),
+    darkId: darkAppearance(catalog),
+    appearanceName: new Map([...catalog.appearances()].map(([n, id]) => [id, n])),
+  };
+  const variants = encodeVariantSet(catalog, name, entry.variants, opts, ctx, {});
+  if (Object.keys(variants).length === 0) {
+    throw new EncodeError(name, `symbol "${name}": no (direction, appearance) pair has a rendition to encode`);
+  }
 
-  // Docs/format/05 §4.4: an empty set means the axis does not vary; the pick then takes the one
-  // stored value and the key says 0, as the runtime's pickVariant expects.
-  const directions = entry.variants.direction.length > 0 ? entry.variants.direction : [undefined];
-  const appearances = entry.variants.appearance.length > 0 ? entry.variants.appearance : [undefined];
-  const pairs: Pair[] = [];
-  for (const direction of directions) for (const appearance of appearances) pairs.push({ direction, appearance });
-  // The default variant is the lowest (direction, appearance) pair; both lists are sorted.
+  // 05 §4.3: an `.rtl` facet is the right-to-left drawing; it becomes the Direction 5 variants of
+  // a symbol that stores none of its own.
+  const rtl = localized?.rtl;
+  if (rtl !== undefined) {
+    let became: string[] = [];
+    if (rtl.drawable && !Object.keys(variants).some((k) => /d5$/.test(k))) {
+      const set = encodeVariantSet(catalog, rtl.name, rtl.variants, opts, ctx, { label: `${rtl.name} as rtl` });
+      for (const [k, v] of Object.entries(set)) {
+        const key = k.replace(/d\d+$/, "d5");
+        if (!Object.hasOwn(variants, key)) variants[key] = v;
+      }
+      if (Object.keys(set).length > 0) became = ["rtl"];
+    }
+    opts.became?.set(rtl.name, became);
+  }
 
-  const ctx: Ctx = { name, palette: opts.palette, warnings: opts.warnings, standIn: false, missing: new Set() };
-  const variants: Record<string, VariantData> = {};
-  for (const pair of pairs) {
-    const a = pair.appearance ?? 0;
-    let aKey: string;
-    if (a === 0) aKey = "a0";
-    else if (a === darkId) aKey = "a1";
-    else {
-      aKey = `a${a}`;
-      opts.warnings?.push(
-        `symbol "${name}": appearance ${a} ("${appearanceName.get(a) ?? "?"}") is neither 0 nor dark; kept as "${aKey}", which the runtime never selects`,
-      );
+  // 05 §4.3: token 13 on the base name first, then the suffixed facet for the tags left.
+  const locales: Record<string, Record<string, VariantData>> = {};
+  const tagOf = new Map([...catalog.localizations()].map(([tag, id]) => [id, tag]));
+  for (const [id, axes] of catalog.localizationsOf(name)) {
+    const tag = tagOf.get(id);
+    if (tag === undefined) {
+      opts.warnings?.push(`symbol "${name}": localization ${id} is not in LOCALIZATIONKEYS; its drawing is not generated`);
+      continue;
     }
-    const key = `${aKey}d${pair.direction ?? 0}`;
-    if (Object.hasOwn(variants, key)) {
-      throw new EncodeError(name, `symbol "${name}": two variants share the key "${key}"`);
+    const set = encodeVariantSet(catalog, name, axes, opts, ctx, { localization: id, label: tag });
+    if (Object.keys(set).length > 0) locales[tag] = set;
+  }
+  for (const f of localized?.facets ?? []) {
+    const tags = f.tags.filter((t) => !Object.hasOwn(locales, t));
+    let became: string[] = [];
+    if (tags.length > 0 && f.entry.drawable) {
+      const set = encodeVariantSet(catalog, f.entry.name, f.entry.variants, opts, ctx, {
+        label: `${f.entry.name} as ${tags.join(", ")}`,
+      });
+      if (Object.keys(set).length > 0) {
+        for (const t of tags) locales[t] = set;
+        became = tags;
+      }
     }
-    const variant = encodeVariant(catalog, entry, pair, opts, key, ctx);
-    if (variant !== undefined) variants[key] = variant;
+    opts.became?.set(f.entry.name, became);
   }
 
   const keys = Object.keys(variants);
-  if (keys.length === 0) {
-    throw new EncodeError(name, `symbol "${name}": no (direction, appearance) pair has a rendition to encode`);
-  }
-  return {
-    v: FORMAT_VERSION,
+  const data: SymbolData = {
+    v: 1,
     name,
     // "apple" only when every named colour the symbol uses is Apple's or exact.
     palette: opts.palette.source === "apple" && !ctx.standIn ? "apple" : "stand-in",
@@ -128,6 +166,61 @@ export function encodeSymbol(catalog: Catalog, entry: SymbolEntry, opts: EncodeO
     modes: modesOf(catalog, name),
     build: { validated: opts.validated },
   };
+  if (Object.keys(locales).length > 0) data.locales = sortedRecord(locales);
+  return data;
+}
+
+/** The record with its keys in code-point order, so the output does not depend on catalog order. */
+function sortedRecord<T>(r: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(r).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+}
+
+/**
+ * The variants of one drawing: the symbol's base, one of its token-13 localizations, or a facet
+ * standing in for a locale or for right to left. One variant per (direction, appearance) pair of
+ * `axes` that has a rendition of `drawing`; `set.label` names a non-base set in notes and errors
+ * (`variant a0d0 (ar)`).
+ */
+function encodeVariantSet(
+  catalog: Catalog,
+  drawing: string,
+  axes: VariantAxes,
+  opts: EncodeOptions,
+  ctx: Ctx,
+  set: { localization?: number; label?: string },
+): Record<string, VariantData> {
+  // Docs/format/05 §4.4: an empty set means the axis does not vary; the pick then takes the one
+  // stored value and the key says 0, as the runtime's pickVariant expects.
+  const directions = axes.direction.length > 0 ? axes.direction : [undefined];
+  const appearances = axes.appearance.length > 0 ? axes.appearance : [undefined];
+  // The default variant is the lowest (direction, appearance) pair; both lists are sorted.
+  const variants: Record<string, VariantData> = {};
+  for (const direction of directions) {
+    for (const appearance of appearances) {
+      const a = appearance ?? 0;
+      let aKey: string;
+      if (a === 0) aKey = "a0";
+      else if (a === ctx.darkId) aKey = "a1";
+      else {
+        aKey = `a${a}`;
+        opts.warnings?.push(
+          `symbol "${ctx.name}": appearance ${a} ("${ctx.appearanceName.get(a) ?? "?"}") is neither 0 nor dark; kept as "${aKey}", which the runtime never selects`,
+        );
+      }
+      const key = `${aKey}d${direction ?? 0}`;
+      const label = set.label === undefined ? key : `${key} (${set.label})`;
+      if (Object.hasOwn(variants, key)) {
+        throw new EncodeError(ctx.name, `symbol "${ctx.name}": two variants share the key "${label}"`);
+      }
+      const pick: PickOptions = {};
+      if (direction !== undefined) pick.direction = direction;
+      if (appearance !== undefined) pick.appearance = appearance;
+      if (set.localization !== undefined) pick.localization = set.localization;
+      const variant = encodeVariant(catalog, drawing, pick, opts, label, ctx);
+      if (variant !== undefined) variants[key] = variant;
+    }
+  }
+  return variants;
 }
 
 /**
@@ -152,23 +245,19 @@ function modesOf(catalog: Catalog, name: string): RenderMode[] {
   return [...(sets.get(name) ?? ["monochrome", "palette"])];
 }
 
+/** One variant of `name` (the drawing's facet) at `pick`; `key` names it in notes and errors. */
 function encodeVariant(
   catalog: Catalog,
-  entry: SymbolEntry,
-  pair: Pair,
+  name: string,
+  pick: PickOptions,
   opts: EncodeOptions,
   key: string,
   ctx: Ctx,
 ): VariantData | undefined {
-  const name = entry.name;
-  const pick: PickOptions = {};
-  if (pair.direction !== undefined) pick.direction = pair.direction;
-  if (pair.appearance !== undefined) pick.appearance = pair.appearance;
-
   // A sparse grid (dark stored for one direction only) has pairs with no rendition: those are
   // skipped. A pair whose rendition exists but does not decode fails the symbol.
   if (!catalog.hasRendition(name, 4, pick)) {
-    opts.warnings?.push(`symbol "${name}": variant ${key} skipped: no regular-master rendition stored for it`);
+    opts.warnings?.push(`symbol "${ctx.name}": variant ${key} skipped: no regular-master rendition stored for it`);
     return undefined;
   }
   const regular = catalog.drawing(name, 4, pick);
@@ -196,17 +285,18 @@ function encodeVariant(
   const masters: VariantData["masters"] = {};
   for (const [m, d] of drawings) {
     const own = steps.get(m) as PathCommand[][];
-    if (m !== 4) checkCompatible(name, key, m, regularSteps, own);
+    if (m !== 4) checkCompatible(ctx.name, key, m, regularSteps, own);
     const master: MasterData = {
       args: own.flatMap((l) => l.flatMap((c) => c.args.map(round3))),
-      viewBox: [...d.viewBox],
+      // Past 6 significant digits the catalog's viewBox is float32 noise.
+      viewBox: [round6(d.viewBox[0]), round6(d.viewBox[1]), round6(d.viewBox[2]), round6(d.viewBox[3])],
       transform: [...d.transform],
     };
     const metrics = metricsOf(catalog, name, m, pick);
     if (metrics === undefined) {
       // The runtime draws it all the same; only text layout needs metrics, and it flags them.
       opts.warnings?.push(
-        `symbol "${name}": variant ${key} master ${m} has no glyph metrics (TLV 1018); text layout falls back to the box scale`,
+        `symbol "${ctx.name}": variant ${key} master ${m} has no glyph metrics (TLV 1018); text layout falls back to the box scale`,
       );
     } else {
       master.metrics = {

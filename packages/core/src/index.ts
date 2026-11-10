@@ -1,9 +1,10 @@
 export * from "./format.js";
+export { decodeSymbol, argCountsOf, delta, undelta } from "./decode.js";
 export { metricCenter, viewBoxToPath } from "./anchor.js";
-export { weightValue, weightScalars, interpolate } from "./weight.js";
-export type { Interpolated } from "./weight.js";
+export { weightValue, weightScalars, interpolate, SCALE_SIZE, BASELINE_K } from "./weight.js";
+export type { Interpolated, Scale, Scalars } from "./weight.js";
 export { resolveLayer, resolveApproximations, INACTIVE_ALPHA, CONTINUOUS_BAND } from "./paint.js";
 export type { PaintOptions, ResolvedLayer, RenderingMode } from "./paint.js";
 export { serializePath, formatNumber, formatSignificant, argOffsets } from "./path.js";
-export { buildSvg, pickVariant } from "./svg.js";
+export { buildSvg, pickVariant, resolveLocale } from "./svg.js";
 export type { SvgNode, RenderOptions } from "./svg.js";

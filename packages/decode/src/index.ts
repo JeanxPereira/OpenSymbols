@@ -62,5 +62,6 @@ export {
   type AppMetadataView,
   type Master,
   type PickOptions,
+  type VariantAxes,
   type SymbolEntry,
 } from "./catalog.js";

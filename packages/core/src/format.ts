@@ -1,6 +1,10 @@
-/** The generated-data contract: what `opensymbols generate` writes and the runtimes read. */
+/**
+ * The generated-data contract. `opensymbols generate` writes `SymbolWire` (format 2, compact);
+ * `decodeSymbol` expands it once into `SymbolData`, the form every runtime reads.
+ */
 
-export const FORMAT_VERSION = 1;
+/** The newest wire format written and read. Readers accept every version up to it. */
+export const FORMAT_VERSION = 2;
 
 export type WeightName =
   | "ultralight"
@@ -81,6 +85,7 @@ export interface VariantData {
 }
 
 export interface SymbolData {
+  /** The expanded, in-memory form (format 1's layout); format 2 data reaches it through `decodeSymbol`. */
   v: 1;
   name: string;
   palette: "apple" | "stand-in";
@@ -90,4 +95,56 @@ export interface SymbolData {
   modes: RenderMode[];
   /** `validated`: the catalog is the reference build (spec section 4); false flags every render `"build"`. */
   build: { validated: boolean };
+  /**
+   * Localized drawings (Docs/format/05 §4.3), by BCP-47 tag as the catalog names it (`ar`, `hi`,
+   * `zh-Hans`), each with its own variants keyed like `variants`. Absent: no localized drawing.
+   */
+  locales?: Record<string, Record<string, VariantData>>;
+}
+
+// ---- format 2: the wire form ----
+
+/** A layer's style in format 2: `opacity` absent means 1, `clearBehind` absent means false. */
+export interface LayerStyleWire {
+  paint: PaintData;
+  opacity?: number;
+  clearBehind?: true;
+}
+
+/**
+ * A layer in format 2. `anim` drops the keys whose value is the default: `alwaysRotates` and
+ * `alwaysPulses` false, `tags`, `strokeKeyframes` and `attachments` empty; it is absent when
+ * nothing is left.
+ */
+export interface LayerWire {
+  cmd: [start: number, end: number];
+  role: Role;
+  modes: Record<RenderMode, LayerStyleWire>;
+  motionGroup: number;
+  variableThreshold?: number;
+  anim?: Record<string, unknown>;
+}
+
+/** A master in format 2: `args` delta-encoded, `d[i] = a[i] − a[i − 2]` for `i ≥ 2`, `d[i] = a[i]` below. */
+export type MasterWire = MasterData;
+
+/** A variant in format 2: no `argCounts` (each op's count is its arity: M 2, L 2, Q 4, C 6, Z 0). */
+export interface VariantWire {
+  ops: string;
+  masters: Partial<Record<1 | 4 | 9, MasterWire>>;
+  layers: LayerWire[];
+  variableValueMode: "color" | "draw";
+  vcContinuous: boolean;
+  anim?: Record<string, unknown>;
+}
+
+export interface SymbolWire {
+  v: 2;
+  name: string;
+  palette: "apple" | "stand-in";
+  variants: Record<string, VariantWire>;
+  defaultVariant: string;
+  modes: RenderMode[];
+  build: { validated: boolean };
+  locales?: Record<string, Record<string, VariantWire>>;
 }

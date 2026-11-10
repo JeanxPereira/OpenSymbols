@@ -70,6 +70,26 @@ const SYMBOLS: Array<{ demo: DemoSymbol; data: SymbolData }> = [
     },
     data: symbolData("square", ["monochrome", "hierarchical", "multicolor", "palette"]),
   },
+  {
+    demo: {
+      name: "globe",
+      component: "Globe",
+      aliases: [],
+      categories: [],
+      searchTerms: [],
+      year: "2021",
+      modes: ["monochrome"],
+      variableValue: false,
+      approximate: [],
+      chunk: 0,
+    },
+    data: (() => {
+      const d = symbolData("globe", ["monochrome"]);
+      const base = d.variants.a0d0!;
+      const ar = { ...base, masters: { 4: { ...base.masters[4]!, args: [0, 0, 9, 0, 4, 9] } } };
+      return { ...d, locales: { ar: { a0d0: ar }, "zh-Hans": { a0d0: ar } } };
+    })(),
+  },
 ];
 
 const index: DemoIndex = {
@@ -175,6 +195,46 @@ describe("inspector", () => {
     const pin = vi.spyOn(cache, "pin");
     await show("wifi");
     expect(pin).toHaveBeenCalledWith("inspector", new Set([0]));
+  });
+
+  it("a Scale control, Medium by default, passed to the preview and the copied JSX", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    await show("square");
+    const scale = control("scale")!;
+    expect(scale.value).toBe("medium");
+    expect([...scale.options].map((o) => o.textContent)).toEqual(["Small", "Medium", "Large"]);
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-copy="jsx"]')!.click());
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("<Square size={128} />"));
+    const markup = () => container.querySelector(".inspector-stage svg")!.outerHTML;
+    const before = markup();
+    await act(async () => choose(scale, "large"));
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-copy="jsx"]')!.click());
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('<Square size={128} scale="large" />'));
+    expect(markup()).not.toBe(before);
+  });
+
+  it("a Locale control for a symbol with locales only: Base by default, then the chosen tag", async () => {
+    const writeText = vi.fn(async () => {});
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    await show("square");
+    expect(control("locale")).toBeNull();
+    await show("globe");
+    const locale = control("locale")!;
+    expect([...locale.options].map((o) => o.textContent)).toEqual(["Base", "ar", "zh-Hans"]);
+    expect(locale.value).toBe("");
+    const base = container.querySelector(".inspector-stage svg path")!.getAttribute("d");
+    await act(async () => choose(locale, "ar"));
+    expect(container.querySelector(".inspector-stage svg path")!.getAttribute("d")).not.toBe(base);
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-copy="jsx"]')!.click());
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining('<Globe size={128} locale="ar" />'));
+    expect(container.querySelector(".inspector-info")!.textContent).toContain("ar, zh-Hans");
+    // Kept across selections, drawn and copied only where it resolves.
+    await show("square");
+    await act(async () => container.querySelector<HTMLButtonElement>('button[data-copy="jsx"]')!.click());
+    expect(writeText).toHaveBeenLastCalledWith(expect.stringContaining("<Square size={128} />"));
+    await show("globe");
+    expect(control("locale")!.value).toBe("ar");
   });
 
   it("copies the JSX and announces it", async () => {

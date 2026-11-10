@@ -1,16 +1,39 @@
 {
   "name": "@opensymbols/decode",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Decoder for a user-supplied SF Symbols catalog.",
+  "keywords": [
+    "sf-symbols",
+    "coreglyphs",
+    "asset-catalog",
+    "car",
+    "bom",
+    "plist",
+    "decoder"
+  ],
   "type": "module",
   "license": "MIT",
-  "exports": {
-    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" }
+  "engines": {
+    "node": ">=22.12"
   },
-  "files": ["dist"],
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format esm --dts --clean",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "node ../../scripts/check-pack.mjs --require-pnpm && pnpm --filter @opensymbols/decode... build && node ../../scripts/check-pack.mjs --package .",
+    "prepublishOnly": "node ../../scripts/check-pack.mjs --require-pnpm"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

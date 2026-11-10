@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { buildSvg, type RenderingMode, type SymbolData, type WeightName } from "@opensymbols/core";
+import { buildSvg, resolveLocale, type RenderingMode, type SymbolData, type WeightName } from "@opensymbols/core";
 import type { IconProps } from "@opensymbols/react";
 import { symbolAt, type ChunkCache } from "../data/chunks.js";
 import type { DemoIndex } from "../data/index-model.js";
@@ -55,6 +55,7 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
   const [settings, setSettings] = useState<InspectorSettings>(() => ({
     mode: gridMode,
     weight: gridWeight,
+    scale: "medium",
     size: 128,
     palette: DEFAULT_PALETTE,
     appearance: "theme",
@@ -93,9 +94,13 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
 
   const palette = settings.mode === "palette" ? settings.palette : undefined;
   const variableValue = sym?.variableValue ? settings.variableValue : undefined;
+  // The requested locale stays across symbols; it is drawn (and copied) only where it resolves.
+  const locale = data ? resolveLocale(data, settings.locale) : undefined;
   const iconProps: IconProps = {
     size: settings.size,
     weight: settings.weight,
+    scale: settings.scale,
+    ...(locale !== undefined ? { locale } : {}),
     mode: settings.mode,
     appearance: resolved,
     layout: settings.layout,
@@ -114,6 +119,8 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
       appearance: resolved,
       size: settings.size,
       weight: settings.weight,
+      scale: settings.scale,
+      ...(locale !== undefined ? { locale } : {}),
       layout: settings.layout,
       // "auto" renders left to right until a `dir` ancestor says otherwise; the stage has none.
       direction: settings.direction === "rtl" ? "rtl" : "ltr",
@@ -121,7 +128,7 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
       ...(palette !== undefined ? { palette } : {}),
       ...(variableValue !== undefined ? { variableValue } : {}),
     }).approximations;
-  }, [data, settings, resolved, palette, variableValue]);
+  }, [data, settings, resolved, palette, variableValue, locale]);
 
   const effect = effectFor(animation);
   const targetSym = animation.kind === "replace" && animation.target !== undefined ? index.symbols.find((s) => s.name === animation.target) : undefined;
@@ -131,7 +138,7 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
   const model = useMemo(
     () => (data && effect ? frameModel(data, iconProps, effect) : undefined),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [data, effectKey, iconProps.weight, iconProps.mode, iconProps.appearance, iconProps.direction],
+    [data, effectKey, iconProps.weight, iconProps.mode, iconProps.appearance, iconProps.direction, iconProps.scale, iconProps.locale],
   );
 
   if (!sym) {
@@ -174,6 +181,8 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
         modes={sym.modes}
         variableValue={sym.variableValue}
         textColor={TEXT_COLOR[appearance]}
+        locales={data?.locales ? Object.keys(data.locales) : []}
+        resolvedLocale={locale}
       />
 
       <AnimationPanel
@@ -205,6 +214,12 @@ export function Inspector({ index, cache, name, gridWeight, gridMode, appearance
         <dd>{sym.modes.map(cap).join(", ")}</dd>
         <dt>Variants</dt>
         <dd>{data ? variantsOf(data).join(", ") || "None" : "…"}</dd>
+        {data?.locales && (
+          <>
+            <dt>Locales</dt>
+            <dd>{Object.keys(data.locales).join(", ")}</dd>
+          </>
+        )}
       </dl>
 
       <CopyButtons pkg={index.package.name} component={sym.component} data={data} props={iconProps} effect={effect} replace={replaceCopy} />

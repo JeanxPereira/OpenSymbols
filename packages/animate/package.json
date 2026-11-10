@@ -1,33 +1,45 @@
 {
   "name": "@opensymbols/animate",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Symbol effects for OpenSymbols: a pure keyframe engine over the generated data.",
+  "keywords": [
+    "sf-symbols",
+    "symbol-effects",
+    "animation",
+    "icons",
+    "react",
+    "opensymbols"
+  ],
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.12"
+  },
   "sideEffects": [
     "./dist/react/index.js"
   ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
     },
     "./react": {
       "types": "./dist/react/index.d.ts",
-      "import": "./dist/react/index.js"
+      "default": "./dist/react/index.js"
     }
   },
   "files": [
-    "dist",
-    "LICENSE"
+    "dist"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "node ../../scripts/check-pack.mjs --require-pnpm && pnpm --filter @opensymbols/animate... build && node ../../scripts/check-pack.mjs --package .",
+    "prepublishOnly": "node ../../scripts/check-pack.mjs --require-pnpm"
   },
   "dependencies": {
-    "@opensymbols/core": "workspace:*"
+    "@opensymbols/core": "workspace:^"
   },
   "peerDependencies": {
     "@opensymbols/react": "workspace:^",
@@ -48,5 +60,8 @@
     "happy-dom": "^21.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

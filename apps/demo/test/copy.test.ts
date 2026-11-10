@@ -60,6 +60,8 @@ describe("copy", () => {
         direction: "auto",
       }),
     ).toBe("<Wifi />");
+    expect(jsxFor("Wifi", { scale: "medium" })).toBe("<Wifi />");
+    expect(jsxFor("Wifi", { locale: "ar", scale: "small", weight: "bold" })).toBe('<Wifi weight="bold" scale="small" locale="ar" />');
     expect(jsxFor("Wifi", { size: 48, weight: 5.5, variableValue: 0.5, direction: "rtl" })).toBe(
       '<Wifi size={48} weight={5.5} variableValue={0.5} direction="rtl" />',
     );
@@ -135,7 +137,7 @@ describe("copy", () => {
     const end = table.indexOf("\n\n");
     const body = end === -1 ? table : table.slice(0, end);
     const rows = [...body.matchAll(/^\| `([a-z-]+)` \| (.+) \|$/gm)].map((m) => [m[1], m[2]]);
-    expect(rows.length).toBeGreaterThanOrEqual(9);
+    expect(rows.length).toBeGreaterThanOrEqual(8);
     expect(Object.fromEntries(rows)).toEqual(REASONS);
   });
 });

@@ -2,15 +2,21 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { UsageError } from "../errors.js";
+import { moduleSource } from "./module-source.js";
 
-/** Symbols per `chunks/<n>.json`. */
+/**
+ * Symbols per demo chunk: `index.json` gives each symbol its `chunk`, and the demo server builds
+ * `chunks/<n>.json` from those modules on request. The package itself holds no chunks.
+ */
 export const CHUNK_SIZE = 200;
 
 /** Where a run stages its output inside the out dir before moving it into place. */
 const STAGING = ".opensymbols-staging";
-/** The files a generation owns, besides `symbols/` and `chunks/`; `index.json` is moved last. */
-const FILES = ["index.js", "index.d.ts", "package.json", "index.json"] as const;
-const DIRS = ["symbols", "chunks"] as const;
+/** The files a generation owns, besides `symbols/`; `index.json` is moved last. */
+const FILES = ["index.js", "index.d.ts", "symbol.d.ts", "package.json", "index.json"] as const;
+const DIRS = ["symbols"] as const;
+/** What earlier generations wrote and this one no longer does: removed when replacing their output. */
+const FORMER = ["chunks"] as const;
 
 export interface PackageContents {
   /** package.json `name`. */
@@ -50,7 +56,7 @@ export function checkOutDir(out: string): void {
   if (!existsSync(indexFile)) {
     // A run stops between staging and moving index.json into place: the staging dir is removed
     // only after index.json is, so its remains always include it or symbols/.
-    const owned = new Set<string>([STAGING, ...DIRS, ...FILES]);
+    const owned = new Set<string>([STAGING, ...DIRS, ...FORMER, ...FILES]);
     const crashed = entries.every((e) => owned.has(e)) && (entries.includes(STAGING) || entries.includes("symbols"));
     if (crashed) return;
     return refuse("has no index.json from a previous generation");
@@ -64,18 +70,15 @@ export function checkOutDir(out: string): void {
   if (!isGenerationIndex(index)) refuse("its index.json is not one a generation wrote (formatVersion, build, symbols)");
 }
 
-// "use client": the module calls createIcon at load, which a Server Component module cannot do.
-// `/*#__PURE__*/`: the call has no side effects, so a bundler drops a module nobody imports.
-const moduleSource = (json: string) =>
-  `"use client";\nimport { createIcon } from "@opensymbols/react";\nexport default /*#__PURE__*/createIcon(${json});\n`;
+/** The one declaration every symbol module shares, through the `exports` map's `types`. */
 const DECLARATION = 'declare const C: import("@opensymbols/react").OpenSymbolIcon;\nexport default C;\n';
 const reexport = (as: string, component: string) =>
   `export { default as ${as} } from "./symbols/${component}.js";`;
 
 /**
  * Writes the package to `out` (checked again with `checkOutDir`): everything is staged in
- * `out/.opensymbols-staging`, then the previous `symbols/` and `chunks/` are replaced and the
- * index files renamed over the old ones, `index.json` last.
+ * `out/.opensymbols-staging`, then the previous `symbols/` is replaced (and an earlier format's
+ * `chunks/` removed) and the index files renamed over the old ones, `index.json` last.
  */
 export function writePackage(out: string, pkg: PackageContents): void {
   checkOutDir(out);
@@ -85,20 +88,21 @@ export function writePackage(out: string, pkg: PackageContents): void {
 
   for (const { component, json } of pkg.symbols) {
     writeFileSync(join(stage, "symbols", `${component}.js`), moduleSource(json));
-    writeFileSync(join(stage, "symbols", `${component}.d.ts`), DECLARATION);
-  }
-  for (let i = 0; i * CHUNK_SIZE < pkg.symbols.length; i++) {
-    const part = pkg.symbols.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
-    writeFileSync(join(stage, "chunks", `${i}.json`), `[${part.map((s) => s.json).join(",")}]\n`);
   }
 
-  const lines = [
-    ...pkg.symbols.map((s) => reexport(s.component, s.component)),
-    ...pkg.aliasExports.map(([alias, component]) => reexport(alias, component)),
-  ];
-  const barrel = lines.length === 0 ? "export {};\n" : lines.join("\n") + "\n";
+  const names = [...pkg.symbols.map((s) => [s.component, s.component] as const), ...pkg.aliasExports];
+  const barrel = names.length === 0 ? "export {};\n" : names.map(([as, c]) => reexport(as, c)).join("\n") + "\n";
   writeFileSync(join(stage, "index.js"), barrel);
-  writeFileSync(join(stage, "index.d.ts"), barrel);
+  // The modules have no declaration files of their own (their types come from symbol.d.ts through
+  // the exports map, which a relative import does not use): the barrel declares each name.
+  const declarations =
+    names.length === 0
+      ? "export {};\n"
+      : 'type Icon = import("@opensymbols/react").OpenSymbolIcon;\n' +
+        names.map(([as]) => `export declare const ${as}: Icon;`).join("\n") +
+        "\n";
+  writeFileSync(join(stage, "index.d.ts"), declarations);
+  writeFileSync(join(stage, "symbol.d.ts"), DECLARATION);
   const packageJson = {
     name: pkg.packageName,
     version: "0.0.0",
@@ -112,8 +116,8 @@ export function writePackage(out: string, pkg: PackageContents): void {
     exports: {
       ".": { types: "./index.d.ts", default: "./index.js" },
       "./index.json": "./index.json",
-      "./chunks/*": "./chunks/*",
-      "./*": { types: "./symbols/*.d.ts", default: "./symbols/*.js" },
+      "./symbols/*": { types: "./symbol.d.ts", default: "./symbols/*" },
+      "./*": { types: "./symbol.d.ts", default: "./symbols/*.js" },
     },
     peerDependencies: { "@opensymbols/react": "*", react: ">=19" },
   };
@@ -124,6 +128,7 @@ export function writePackage(out: string, pkg: PackageContents): void {
     withFsRetry("remove", join(out, d), () => rmSync(join(out, d), { recursive: true, force: true }));
     withFsRetry("rename", join(stage, d), () => renameSync(join(stage, d), join(out, d)));
   }
+  for (const d of FORMER) withFsRetry("remove", join(out, d), () => rmSync(join(out, d), { recursive: true, force: true }));
   for (const f of FILES) withFsRetry("rename", join(stage, f), () => renameSync(join(stage, f), join(out, f)));
   withFsRetry("remove", stage, () => rmSync(stage, { recursive: true, force: true }));
 }

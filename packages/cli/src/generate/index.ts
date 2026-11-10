@@ -2,10 +2,11 @@
 import type { RenderMode } from "@opensymbols/core";
 import { DecodeError, type Catalog, type SymbolEntry } from "@opensymbols/decode";
 import { describeError, EncodeError, UsageError } from "../errors.js";
-import { encodeSymbol, type Palette } from "./encode.js";
+import { encodeSymbol, type LocalizedSources, type Palette } from "./encode.js";
 import { fingerprint, REFERENCE_BUILD } from "./fingerprint.js";
 import { assemblePackage, symbolFacts, type AssembleSymbol } from "./assemble.js";
 import { buildPalette } from "./stand-in-palette.js";
+import { toWire } from "./wire.js";
 import { checkOutDir } from "./write.js";
 
 export type { IndexSymbol } from "./assemble.js";
@@ -44,7 +45,7 @@ const withoutSymbol = (text: string): string => text.replace(/^symbol "[^"]*":? 
 function skipGroup(e: unknown): { group: string; detail: string } {
   if (e instanceof DecodeError) return { group: `decode error in ${e.where}`, detail: withoutSymbol(e.message) };
   const text = withoutSymbol(e instanceof Error ? e.message : String(e));
-  const variant = /^variant \w+: /.exec(text)?.[0] ?? "";
+  const variant = /^variant \w+(?: \([^)]*\))?: /.exec(text)?.[0] ?? "";
   const rest = text.slice(variant.length);
   const colon = rest.indexOf(": ");
   if (colon < 0) return { group: rest, detail: variant.replace(/: $/, "") };
@@ -53,33 +54,60 @@ function skipGroup(e: unknown): { group: string; detail: string } {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/**
+ * Each base symbol's localized facets (Docs/format/05 §4.3): `.rtl`, and `<name>.<suffix>` with the
+ * catalog tags the suffix stands for: itself when it is a tag, else the tags that add a script to
+ * it (`zh` → `zh-Hans`, `zh-Hant`).
+ */
+function localizedSources(catalog: Catalog, entries: readonly SymbolEntry[]): Map<string, LocalizedSources> {
+  const tags = [...catalog.localizations().keys()];
+  const out = new Map<string, { facets: Array<{ entry: SymbolEntry; tags: string[] }>; rtl?: SymbolEntry }>();
+  for (const entry of entries) {
+    const base = entry.localizedVariantOf;
+    if (base === undefined) continue;
+    let sources = out.get(base);
+    if (sources === undefined) out.set(base, (sources = { facets: [] }));
+    const suffix = entry.name.slice(base.length + 1);
+    if (suffix === "rtl") {
+      sources.rtl = entry;
+      continue;
+    }
+    const scripted = tags.filter((t) => t === `${suffix}-Hans` || t === `${suffix}-Hant`);
+    sources.facets.push({ entry, tags: tags.includes(suffix) || scripted.length === 0 ? [suffix] : scripted });
+  }
+  return out;
+}
+
 /** Generates the package into `opts.out` and reports on `io.err`; returns the exit code. */
 export function generate(catalog: Catalog, opts: GenerateOptions, io: { err(text: string): void }): number {
   const pal = palette(catalog);
   checkOutDir(opts.out);
   const { note: headerNote, ...build } = fingerprint(catalog);
 
-  const encoded: Array<{ entry: SymbolEntry; json: string; facts: AssembleSymbol["facts"] }> = [];
+  const encoded: Array<{ entry: SymbolEntry; json: string; facts: AssembleSymbol["facts"]; locales: string[] }> = [];
   const skipped: Array<{ name: string; reason: string; group: string; detail: string }> = [];
-  const localized: Array<{ name: string; base: string }> = [];
+  const entries = catalog.symbols();
+  const sources = localizedSources(catalog, entries);
+  // Localized facet -> what it became in its base symbol's data.
+  const became = new Map<string, string[]>();
   // Warning text (symbol name stripped) -> the symbols it was raised for.
   const warnings = new Map<string, string[]>();
-  for (const entry of catalog.symbols()) {
-    if (entry.localizedVariantOf !== undefined) {
-      localized.push({ name: entry.name, base: entry.localizedVariantOf });
-      continue;
-    }
+  for (const entry of entries) {
+    // 05 §4.3: a localized facet is written into its base symbol, not as a symbol of its own.
+    if (entry.localizedVariantOf !== undefined) continue;
     // Docs/format/01 §3.10: a facet of pixels only is not a symbol; nothing to generate.
     if (!entry.drawable) continue;
     const notes: string[] = [];
     try {
-      const data = encodeSymbol(catalog, entry, {
-        masters: opts.masters,
-        palette: pal,
-        validated: build.validated,
-        warnings: notes,
-      });
-      encoded.push({ entry, json: JSON.stringify(data), facts: symbolFacts(data) });
+      const symbolBecame = new Map<string, string[]>();
+      const data = encodeSymbol(
+        catalog,
+        entry,
+        { masters: opts.masters, palette: pal, validated: build.validated, warnings: notes, became: symbolBecame },
+        sources.get(entry.name),
+      );
+      encoded.push({ entry, json: JSON.stringify(toWire(data)), facts: symbolFacts(data), locales: Object.keys(data.locales ?? {}) });
+      for (const [k, v] of symbolBecame) became.set(k, v);
     } catch (e) {
       // One bad symbol must not abort the run: skip it, name it and say why. Anything else is a
       // bug, and stops the run naming the symbol it was raised on.
@@ -96,6 +124,11 @@ export function generate(catalog: Catalog, opts: GenerateOptions, io: { err(text
       else if (!names.includes(entry.name)) names.push(entry.name);
     }
   }
+
+  const localized = entries
+    .filter((e) => e.localizedVariantOf !== undefined)
+    .map((e) => ({ name: e.name, base: e.localizedVariantOf as string, became: became.get(e.name) ?? [] }));
+  const localeCount = encoded.reduce((n, s) => n + s.locales.length, 0);
 
   // Names are assigned over the generated symbols only; a collision is fatal before writing.
   const { aliasExports, reports } = assemblePackage({
@@ -138,8 +171,15 @@ export function generate(catalog: Catalog, opts: GenerateOptions, io: { err(text
       for (const s of list) io.err(s.detail === "" ? `    ${s.name}\n` : `    ${s.name}: ${s.detail}\n`);
     }
   }
-  if (localized.length > 0) {
-    io.err(`localized: ${plural(localized.length, "facet")} not generated (listed in index.json "localized")\n`);
+  if (localeCount > 0 || localized.length > 0) {
+    const used = localized.filter((l) => l.became.length > 0).length;
+    io.err(
+      `localized: ${plural(localeCount, "localized drawing")} across ${plural(
+        encoded.filter((s) => s.locales.length > 0).length,
+        "symbol",
+      )}; ${used} of ${plural(localized.length, "localized facet")} written into their base symbol ` +
+        `(each listed in index.json "localized" with what it became)\n`,
+    );
   }
   for (const r of reports) io.err(`note: ${r}\n`);
   for (const [text, list] of warnings) {

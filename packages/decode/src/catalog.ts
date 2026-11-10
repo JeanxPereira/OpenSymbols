@@ -54,6 +54,14 @@ export interface AppMetadataView {
 export interface PickOptions {
   appearance?: number;
   direction?: number;
+  /** A `LOCALIZATIONKEYS` id (token 13, Docs/format/05 §4.3); default 0, the base drawing. */
+  localization?: number;
+}
+
+/** The variant axes of a set of renditions (Docs/format/05 §4.4); see `SymbolEntry.variants`. */
+export interface VariantAxes {
+  appearance: number[];
+  direction: number[];
 }
 
 export class Catalog {
@@ -104,10 +112,7 @@ export class Catalog {
         aliases: aliasesOf.get(name) ?? [],
         categories: meta.symbolCategories.get(name) ?? [],
         searchTerms: meta.searchTerms.get(name) ?? [],
-        variants: {
-          appearance: appearances.size > 1 ? sorted(appearances) : [],
-          direction: directions.has(4) && directions.has(5) ? sorted(directions) : [],
-        },
+        variants: axes(directions, appearances),
         drawable,
       };
       const year = meta.availability.get(name);
@@ -217,6 +222,37 @@ export class Catalog {
     return parseBvg(this.#pick(name, master, opts).payload as Uint8Array);
   }
 
+  /** LOCALIZATIONKEYS tag (BCP-47, Docs/format/05 §4.3) → Localization id; a copy. */
+  localizations(): Map<string, number> {
+    return this.#car.localizations();
+  }
+
+  /**
+   * The symbol's token-13 localizations (Docs/format/05 §4.3): each non-zero Localization id its
+   * vector renditions carry, with the variant axes of those renditions under the rule of
+   * `SymbolEntry.variants`. Empty for an unknown name or a symbol with none.
+   */
+  localizationsOf(name: string): Map<number, VariantAxes> {
+    const entry = this.resolve(name);
+    const found = new Map<number, { directions: Set<number>; appearances: Set<number> }>();
+    if (entry === undefined) return new Map();
+    for (const r of this.#car.renditions(entry.identifier)) {
+      if (r.payload === null) continue;
+      const l = r.key[Token.Localization] ?? 0;
+      if (l === 0) continue;
+      let f = found.get(l);
+      if (f === undefined) found.set(l, (f = { directions: new Set(), appearances: new Set() }));
+      f.directions.add(r.key[Token.Direction] ?? 0);
+      f.appearances.add(r.key[Token.Appearance] ?? 0);
+    }
+    const out = new Map<number, VariantAxes>();
+    for (const l of sorted(new Set(found.keys()))) {
+      const f = found.get(l)!;
+      out.set(l, axes(f.directions, f.appearances));
+    }
+    return out;
+  }
+
   /** Glyph metrics (Docs/format/06 §9.1) of the rendition `document` would pick. */
   metrics(name: string, master: Master, opts: PickOptions = {}): GlyphMetrics {
     const picked = this.#pick(name, master, opts);
@@ -249,7 +285,7 @@ export class Catalog {
   }
 
   /**
-   * Docs/format/05 §4.4: filter on (Identifier, GlyphWeight, Localization 0) and any fixed axis,
+   * Docs/format/05 §4.4: filter on (Identifier, GlyphWeight, Localization — 0 unless given) and any fixed axis,
    * take the lowest pair. Two renditions with the same full tuple are an error, not a choice.
    */
   #pick(name: string, master: Master, opts: PickOptions): Rendition {
@@ -262,7 +298,7 @@ export class Catalog {
         (opts.appearance === undefined ? "" : `, appearance ${opts.appearance}`);
       throw new DecodeError(
         WHERE,
-        `symbol "${entry.name}" (identifier ${entry.identifier}) has no vector rendition for weight ${master}, localization 0${fixed}`,
+        `symbol "${entry.name}" (identifier ${entry.identifier}) has no vector rendition for weight ${master}, localization ${opts.localization ?? 0}${fixed}`,
       );
     }
     return best;
@@ -275,7 +311,7 @@ export class Catalog {
     for (const r of this.#car.renditions(entry.identifier)) {
       if (r.payload === null) continue;
       if (r.key[Token.GlyphWeight] !== master) continue;
-      if ((r.key[Token.Localization] ?? 0) !== 0) continue;
+      if ((r.key[Token.Localization] ?? 0) !== (opts.localization ?? 0)) continue;
       const direction = r.key[Token.Direction] ?? 0;
       const appearance = r.key[Token.Appearance] ?? 0;
       if (opts.direction !== undefined && direction !== opts.direction) continue;
@@ -291,7 +327,7 @@ export class Catalog {
       const [d, a] = pair(best);
       throw new DecodeError(
         WHERE,
-        `symbol "${entry.name}": two vector renditions share identifier ${entry.identifier}, weight ${master}, localization 0, direction ${d}, appearance ${a} (05 §4.4)`,
+        `symbol "${entry.name}": two vector renditions share identifier ${entry.identifier}, weight ${master}, localization ${opts.localization ?? 0}, direction ${d}, appearance ${a} (05 §4.4)`,
       );
     }
     return best;
@@ -305,6 +341,14 @@ function pair(r: Rendition): [number, number] {
 function less(direction: number, appearance: number, than: Rendition): boolean {
   const d = than.key[Token.Direction] ?? 0;
   return direction < d || (direction === d && appearance < (than.key[Token.Appearance] ?? 0));
+}
+
+/** Docs/format/05 §4.4: Direction only when it holds both 4 and 5, Appearance when it has more than one. */
+function axes(directions: Set<number>, appearances: Set<number>): VariantAxes {
+  return {
+    appearance: appearances.size > 1 ? sorted(appearances) : [],
+    direction: directions.has(4) && directions.has(5) ? sorted(directions) : [],
+  };
 }
 
 function sorted(set: Set<number>): number[] {

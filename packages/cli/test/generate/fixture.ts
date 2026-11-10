@@ -99,6 +99,8 @@ export interface CatalogSpec {
   symbolCategories?: Record<string, string[]>;
   /** Files under app/; no app/ dir when absent. */
   app?: Record<string, Uint8Array | string>;
+  /** LOCALIZATIONKEYS: tag -> id (token 13 of a rendition key). */
+  localizations?: Record<string, number>;
   /** CARHEADER fields; buildCar's defaults when absent. */
   header?: CarSpec["header"];
 }
@@ -117,7 +119,7 @@ export function writeCatalog(root: string, spec: CatalogSpec): string {
     buildCar({
       keyFormat: KEY_FORMAT,
       facets,
-      localizations: {},
+      localizations: spec.localizations ?? {},
       appearances: {},
       renditions,
       ...(spec.header !== undefined ? { header: spec.header } : {}),

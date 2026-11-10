@@ -85,7 +85,15 @@ export interface FrameModel {
 export function frameModel(data: SymbolData, props: IconProps, effect: EffectProps): FrameModel {
   const appearance = props.appearance ?? "light";
   const mode = props.mode && data.modes.includes(props.mode) ? props.mode : "monochrome";
-  const drawing = drawingOf({ data, weight: props.weight ?? "regular", appearance, direction: props.direction === "rtl" ? "rtl" : "ltr" });
+  // The drawing the preview shows: same weight, scale and locale.
+  const drawing = drawingOf({
+    data,
+    weight: props.weight ?? "regular",
+    appearance,
+    direction: props.direction === "rtl" ? "rtl" : "ltr",
+    scale: props.scale ?? "medium",
+    locale: props.locale,
+  });
   // The selected repeat: a continuous effect's timeline is its loop, not its once form.
   const repeat = "repeat" in effect && effect.repeat === "continuous" ? "continuous" : "once";
   const spec = toSpec(effect, { mode, appearance }, repeat);

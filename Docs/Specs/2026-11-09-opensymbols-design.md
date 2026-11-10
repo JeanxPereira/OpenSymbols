@@ -34,7 +34,8 @@ from one; the generator itself runs anywhere Node runs.
    per symbol, `size`, `color`, `className`) plus SF Symbols' own axes.
 3. All four rendering modes: monochrome, hierarchical, palette, multicolor, including
    the knockout layers (`-sfsymbols-clear-behind`).
-4. Weight: the nine named weights and a continuous value.
+4. Weight: the nine named weights and a continuous value, with CoreUI's own scalar table;
+   and the symbol scale (Small, Medium, Large) that SwiftUI calls `imageScale`.
 5. Variable value (0..1), in both of the catalog's modes: `color` (per-layer threshold)
    and `draw` (`-sfsymbols-variable-draw`).
 6. Every symbol effect with its options, behaving keyframe for keyframe like Apple's
@@ -54,11 +55,6 @@ from one; the generator itself runs anywhere Node runs.
   can come later, but none ship in v1.
 - A font build (`.woff2` with ligatures). Fonts cannot carry layers or effects.
 - Raster output (PNG). Everything is SVG.
-- `GlyphSize` Small/Medium/Large: the transform CoreUI applies
-  (`+[CUIVectorGlyphMutator transformForGlyphSize:]`) is not decoded. v1 has `size` only.
-- Localized drawings (rendition token 13 and the `.ar`/`.hi`-suffixed facets). The
-  generator records which locales exist so a later version can add them, and draws the
-  base.
 - Extracting `CoreGlyphs.bundle` from an IPSW or a macOS installer.
 
 ## 4. Anti-goals
@@ -67,8 +63,8 @@ from one; the generator itself runs anywhere Node runs.
   no metadata plists in the git repo, the npm tarballs, the CI caches or the test
   fixtures (§11).
 - **An approximation shown as Apple's output.** Wherever OpenSymbols draws something it
-  did not decode (an intermediate weight, the stand-in palette, a catalog build nobody
-  validated), the API flags it and the demo says so on screen.
+  did not decode (the stand-in palette, a catalog build nobody validated), the API flags it
+  and the demo says so on screen.
 - **A number with no source.** Every format fact and every animation constant in the
   code points at the document in `Docs/` that states it and where it was read. A
   constant nobody can trace is a bug.
@@ -84,7 +80,7 @@ user's catalog dir ──► opensymbols generate  (Node CLI, uses @opensymbols/
                    generated package (user's disk, never published)
                      ├─ index.json          names, aliases, categories, search terms
                      ├─ symbols/*.js        one ESM module per symbol (data + component)
-                     └─ chunks/*.json       geometry batches for the demo
+                     └─ symbol.d.ts         the one type declaration every module shares
                               │
      ┌────────────────────────┼─────────────────────────┐
      ▼                        ▼                         ▼
@@ -163,21 +159,48 @@ hundred symbols carry two: a dark-appearance or a right-to-left drawing):
 - per document: draw-reverses-motion-groups, variable-value mode, vc-continuous, wiggle
   style and angle, rotates-clockwise, shape groups, draw attachment data;
 - availability per rendering mode, so the component knows a symbol has no multicolor
-  drawing instead of guessing.
+  drawing instead of guessing;
+- its localized drawings, by BCP-47 tag, each with its own variants (`locales`; below and
+  `Docs/format/05-metadata.md` §4.3).
 
-The output format is versioned (`formatVersion` in `index.json`); the runtime refuses a
-package from a newer major.
+The output format is versioned (`formatVersion` in `index.json`, `v` in each symbol's
+data); the runtime refuses a package from a newer major. The generator writes **format 2**
+(`SymbolWire`, `packages/core/src/format.ts`), a compact wire form:
+
+- each master's `args` are delta-encoded, `d[i] = a[i] − a[i − 2]` (`d[i] = a[i]` for the
+  first two), so an x follows the previous x and a y the previous y;
+- no per-command argument counts: each op's count is its arity (`M` 2, `L` 2, `Q` 4, `C` 6,
+  `Z` 0);
+- default values are left out: a layer style's `opacity: 1` and `clearBehind: false`, and a
+  layer's `anim` keys at their default (`alwaysRotates` and `alwaysPulses` false; `tags`,
+  `strokeKeyframes` and `attachments` empty);
+- `viewBox` values rounded to 6 significant digits.
+
+`decodeSymbol` (`packages/core/src/decode.ts`) expands it once per data object, cached,
+into `SymbolData`, the in-memory form every runtime reads; `createIcon` and `SymbolIcon`
+accept either form.
+
+**Localized drawings.** A symbol's drawing for a language goes into its `locales` under the
+catalog's tag: the token-13 renditions of the base name first, then the `<name>.<suffix>`
+facet (a `zh` facet becomes `zh-Hans` and `zh-Hant` when the catalog's tags say so, else
+`zh`). A `<name>.rtl` facet becomes the base symbol's Direction 5 variant when the base has
+none of its own.
 
 ### 7.3 Output
 
 - `symbols/<name>.js`: one ESM module per symbol, exporting the component built by
-  `createIcon(data)` from `@opensymbols/react`. Data is inlined as compact arrays, not as
-  SVG strings, because weight interpolation needs points.
+  `createIcon(data)` from `@opensymbols/react`, with its data inlined in format 2 (§7.2),
+  as numbers, not SVG strings, because weight interpolation needs points.
+- `symbol.d.ts`: one declaration shared by every symbol module, through the `types` of the
+  `exports` map.
 - `index.js`: re-exports every component, `sideEffects: false`, so bundlers tree-shake.
 - `index.json`: name, aliases, categories, search terms, availability year, variants,
-  modes available, chunk id. Small enough to load whole in the demo.
-- `chunks/<n>.json`: geometry batched for the demo's on-demand loading.
+  modes available, chunk id; the localized and right-to-left facets with the locale or
+  direction they became. Small enough to load whole in the demo.
 - `package.json`, so the output installs with `file:` or from a private registry.
+
+The package holds no geometry batches: the demo server builds each chunk on request from
+`symbols/*.js` and caches it (§12.2).
 
 `--masters regular` bakes a single master (smaller output; `weight` then accepts only
 `regular`). Default is all three.
@@ -190,9 +213,10 @@ part, and when the result starts with a digit, put `Sf` in front (`wifi` → `Wi
 checks the mapping is injective over the catalog it read and stops on a collision,
 printing both names. Aliases are re-exports of the same module.
 
-Localized facets (`0.circle.ar`, `*.zh`, ...; 1,317 of the reference build's public
-names) are not components in v1; `index.json` lists them under their base symbol. RTL
-mirroring is the `Direction` axis of the base symbol, not a facet, and is supported.
+Localized and right-to-left facets (`0.circle.ar`, `*.zh`, `*.rtl`, ...; 1,317 of the
+reference build's public names) are not components: their drawings are the base symbol's
+`locales` and Direction 5 variant (§7.2), reached through the `locale` and `direction`
+props, and `index.json` lists each with its base symbol.
 
 ### 7.5 `dump`
 
@@ -213,7 +237,9 @@ import { Wifi } from "my-symbols";
   color="currentColor"             // tint; monochrome and hierarchical
   palette={["#0a84ff", "#30d158"]} // palette mode, one colour per role
   variableValue={0.6}              // 0..1, when the symbol supports it
+  scale="large"                    // small | medium | large, default medium
   appearance="dark"                // picks the dark drawing when one exists
+  locale="ar"                      // a localized drawing: exact tag, then language, then base
   title="Wi-Fi"                    // accessible name; decorative (aria-hidden) when absent
 />
 ```
@@ -229,6 +255,19 @@ layouts:
   metrics, width is the symbol's own, and the icon sits on the text baseline. For icons
   inline with text.
 
+**Scale.** `scale` is CoreUI's glyph size: `small`, `medium` (default, like SwiftUI's
+`imageScale`) or `large`, S = 1, 1.276, 1.647 (`Docs/format/01-bom-and-car.md` §5.4). It
+selects the weight table's row (§8.2), so the strokes change with it, and scales the
+glyph (path, viewBox, insets, anchors) by S about the master's origin. In the text layout
+the glyph grows by S and the baseline moves to `S·b + K·(S − 1)·X` (`K = 0.352294921875`,
+`X` the reference point size, an inference); the cap height is not scaled. In the box
+layout the glyph still fits its box: scale changes its weights and proportions, not its
+pixel size.
+
+**Locale.** `locale` picks a localized drawing from the symbol's `locales`: the exact tag
+(`zh-Hant`), then its language subtag (`ar-EG` → `ar`), else the base drawing. Absent, the
+base drawing.
+
 Output is plain SVG: one `<svg>`, one `<g>` with the group transform, one `<path>` per
 layer. Knockout layers become an SVG `<mask>` whose id comes from `useId`, so two
 instances never share one. RTL comes from the nearest `dir="rtl"` ancestor and picks the
@@ -236,16 +275,17 @@ mirrored drawing when the symbol has one, overridable with a `direction` prop.
 
 ### 8.2 Weight
 
-Interpolation is CoreUI's formula:
-`p = regular + s_ul·(ultralight − regular) + s_b·(black − regular)`.
+Interpolation is CoreUI's formula, per value:
+`p = regular + x·(ultralight − regular) + y·(black − regular)`.
 
-The scalar table that maps the nine weights to `(s_ul, s_b)`
-(`+[CUIVectorGlyphMutator _interpolationData]`) is **not decoded**. v1 ships a
-provisional table: Ultralight, Regular and Black exact; the six others placed linearly
-between the masters. The table lives in one module, marked as an inference, so replacing
-it with the decoded one is a one-file change. Every API that returns geometry also
-returns `approximate: boolean`, true for any weight that is not a master; the demo shows
-it.
+The pair `(x, y)` comes from CoreUI's table (`+[CUIVectorGlyphMutator _interpolationData]`,
+`Docs/format/01-bom-and-car.md` §5.2): 6 sizes (0.2, 0.5, 1.0, 1.276, 1.647, 2.0) × 9
+weights (keys −0.8, −0.6, −0.4, 0, 0.23, 0.3, 0.4, 0.56, 0.62), float64. A weight on the
+1..9 scale maps to its key; a fractional weight interpolates linearly between the
+neighbouring keys, a size between table sizes bilinearly; nothing is clamped. The same pair
+mixes the viewBox, the metrics, the insets and the anchors (`Docs/format/06-drawing.md`
+§9.4). The nine named weights and every weight between them are drawn as CoreUI draws them;
+a weight is never flagged approximate.
 
 ### 8.3 Paint
 
@@ -356,7 +396,9 @@ Run over a real catalog (`SF_CATALOG_DIR`), never in public CI:
 ### 10.3 The runtime
 
 - Component tests (Vitest + Testing Library) on toy data: props to SVG, masks with
-  unique ids, `approximate` flags, RTL selection.
+  unique ids, `approximate` flags, RTL and locale selection, scale.
+- The weight table and the scale transform are tested against the values and worked
+  examples of `Docs/format/01-bom-and-car.md` §5.2 and §5.4.
 - The demo's budget (my call): first paint of the grid under 1 s on a warm local server;
   scrolling the full catalog at 60 fps on the authors' machine.
 
@@ -380,7 +422,8 @@ page (what this is, the API, how to generate) may exist but draws no SF Symbol.
 
 - First paint loads only `index.json` and the app shell.
 - The grid is virtualized: only visible cells exist in the DOM.
-- Geometry arrives per chunk as cells scroll into view; the grid draws the regular
+- Geometry arrives per chunk as cells scroll into view; the demo server builds each chunk
+  on request from the package's `symbols/*.js` and caches it. The grid draws the regular
   master only, monochrome, with no animation runtime.
 - The inspector loads the selected symbol's full data and the animate package lazily
   (dynamic `import()`).
@@ -393,8 +436,9 @@ search and grid/list switch, grid, and an inspector on the right.
 - **Search:** name, aliases, search terms; categories in the sidebar.
 - **Rendering:** mode, tint, palette colours (one picker per role), appearance
   light/dark, variable value slider (only for symbols that have one), weight as nine
-  stops and a continuous slider. A visible "approximate" badge whenever the weight is
-  not a master, the palette is the stand-in, or the catalog build is unvalidated.
+  stops and a continuous slider, scale (small, medium, large), and locale for symbols with
+  localized drawings. A visible "approximate" badge whenever the palette is the stand-in or
+  the catalog build is unvalidated.
 - **Animation:** every effect, with exactly the options that effect takes; speed; once
   or continuous; play, pause, and a **timeline scrubber** (the engine is a pure function
   of `t`, so scrubbing is free).
@@ -418,11 +462,10 @@ search and grid/list switch, grid, and an inspector on the right.
   Apple's and under Apple's license.
 - Name and scope `opensymbols` / `@opensymbols/*` (npm availability not checked).
 - Format docs written before the decoder (§6).
-- Provisional linear weight table, flagged `approximate`.
 - SwiftUI-shaped effect API (`effect` + `trigger` / `active` / `visible`).
 - `size` defaults to a lucide-style square box; SF point-size layout is `layout="text"`.
-- React only; private catalog, GlyphSize, localized drawings and IPSW extraction out of
-  v1.
+- React only; private catalog and IPSW extraction out of v1.
+- `scale` defaults to `medium`, like SwiftUI's `imageScale`.
 - Component naming rule of §7.4.
 - Any catalog build accepted; only validated builds are unflagged.
 - pnpm monorepo, Vite for the demo, Vitest for tests, TypeScript strict.
@@ -438,10 +481,11 @@ search and grid/list switch, grid, and an inspector on the right.
 
 ## 16. Open questions
 
-- The nine-weight scalar table (§8.2).
 - Variable Color's remaining open points (07 §9.6): the Swift layer's defaults, the outro
   on removal.
-- The GlyphSize transform (§3).
+- Which value CoreUI's baseline shift multiplies (`X`, read as the reference point size),
+  and whether the document `transform` is interpolated across masters
+  (`Docs/format/01-bom-and-car.md` §5.2, §5.4).
 - `data-d` on variable-draw symbols: five numbers whose meaning is not yet read; Variable
   Draw is implemented from what is known and this stays flagged.
 - No pixel comparison against Apple's renderer exists; the demo makes no claim that it

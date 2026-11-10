@@ -8,7 +8,7 @@ import { pathToFileURL } from 'node:url';
 
 const USAGE = `usage: node scripts/synthetic-package.mjs --out DIR --count N [--seed S]
 
-Writes a generated icon package (index.json, chunks/, symbols/, index.js, package.json) of N
+Writes a generated icon package (index.json, symbols/, index.js, package.json) of N
 synthetic symbols into DIR, which must be new, empty or a previous generation.
   --out DIR    where to write; name it synthetic*/ to keep it out of git
   --count N    how many symbols (default 200)
@@ -285,6 +285,7 @@ const KIND_CATEGORY = { ring: 'rings', disc: 'filled', bars: 'bars', square: 'ou
 const KIND_BASES = { ring: ['ring'], disc: ['disc', 'dot'], square: ['square', 'tile'], bars: ['bars'] };
 const MODIFIERS_1 = ['fill', 'badge', 'slash', 'dotted', 'thick', 'outline', 'inset', 'double'];
 const MODIFIERS_2 = ['up', 'down', 'left', 'right', 'trailing', 'leading', 'center'];
+const LOCALIZED_EVERY = 25;
 const YEARS = ['2019', '2020', '2021', '2022', '2023', '2024'];
 
 function makeSymbols(count, seed, componentName) {
@@ -345,16 +346,20 @@ function makeSymbols(count, seed, componentName) {
     for (const k of categories) for (const t of CATEGORIES.find((c) => c.key === k).terms) if (rand() < 0.6) terms.add(t);
     terms.add(CATEGORIES.find((c) => c.key === own.key).terms[0]);
 
+    const data = {
+      v: 1,
+      name,
+      palette: 'stand-in',
+      variants,
+      defaultVariant,
+      modes: ['monochrome', 'hierarchical', 'multicolor', 'palette'],
+      build: { validated: false },
+    };
+    // Every 25th symbol has localized drawings (Docs/format/05 section 4.3), made up like the rest:
+    // "ar" mirrored, "hi" heavier. Drawn from the spec alone, so no name or shape moves.
+    if (i % LOCALIZED_EVERY === 0) data.locales = { ar: { a0d0: variant(spec, false, 5) }, hi: { a0d0: variant(spec, true, 0) } };
     symbols.push({
-      data: {
-        v: 1,
-        name,
-        palette: 'stand-in',
-        variants,
-        defaultVariant,
-        modes: ['monochrome', 'hierarchical', 'multicolor', 'palette'],
-        build: { validated: false },
-      },
+      data,
       categories,
       searchTerms: [...terms],
       year: pick(YEARS),
@@ -374,7 +379,7 @@ async function main() {
     process.stderr.write(`synthetic-package: cannot load packages/cli/dist (${e.message.split('\n')[0]}); run \`pnpm build\` first\n`);
     process.exit(1);
   }
-  const { assemblePackage, symbolFacts, componentName } = assemble;
+  const { assemblePackage, symbolFacts, componentName, toWire } = assemble;
   ({ metricCenter } = await import(pathToFileURL(join(root, 'packages', 'core', 'dist', 'index.js')).href));
   const symbols = makeSymbols(opts.count, opts.seed, componentName);
   assemblePackage({
@@ -389,7 +394,8 @@ async function main() {
       categories: s.categories,
       searchTerms: s.searchTerms,
       year: s.year,
-      json: JSON.stringify(s.data),
+      // Format 2, as `generate` writes it.
+      json: JSON.stringify(toWire(s.data)),
       facts: symbolFacts(s.data),
     })),
     categories: CATEGORIES.map(({ key, icon, label }) => ({ key, icon, label })),

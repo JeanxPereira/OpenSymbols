@@ -1,4 +1,4 @@
-import type { SymbolData } from "@opensymbols/core";
+import { decodeSymbol, type SymbolData, type SymbolWire } from "@opensymbols/core";
 import { packageUrl, type DemoIndex } from "./index-model.js";
 
 export interface ChunkCacheOptions {
@@ -15,7 +15,8 @@ interface Waiter {
 const noop = () => {};
 
 /**
- * Loads `chunks/<n>.json` with a priority queue, bounded concurrency and an LRU of loaded chunks.
+ * Loads `chunks/<n>.json` (which the demo server builds from the symbol modules) with a priority
+ * queue, bounded concurrency and an LRU of loaded chunks.
  * Pinned chunks are never evicted or pruned. Each owner (the grid or list as "view", the inspector as
  * "inspector") keeps its own pin set and the pinned chunks are their union, so the cache holds up to
  * max(capacity, pinned count) chunks: capacity is exceeded only when more chunks than that are pinned.
@@ -186,7 +187,9 @@ export class ChunkCache {
       try {
         const res = await this.#fetch(url);
         if (res.status !== 200) throw new Error(`cannot load ${url}: HTTP ${res.status}`);
-        data = (await res.json()) as SymbolData[];
+        // Format 2 (what the demo server builds from the modules) is expanded here, once; format 1
+        // passes through. Everything past the cache reads `SymbolData`.
+        data = ((await res.json()) as Array<SymbolData | SymbolWire>).map(decodeSymbol);
       } catch (e) {
         failure = e instanceof Error ? e : new Error(String(e));
       }

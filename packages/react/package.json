@@ -1,14 +1,25 @@
 {
   "name": "@opensymbols/react",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "React components for generated OpenSymbols data.",
+  "keywords": [
+    "sf-symbols",
+    "icons",
+    "react",
+    "svg",
+    "components",
+    "opensymbols"
+  ],
   "type": "module",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.12"
+  },
   "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "default": "./dist/index.js"
     }
   },
   "files": [
@@ -17,10 +28,12 @@
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.test.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepack": "node ../../scripts/check-pack.mjs --require-pnpm && pnpm --filter @opensymbols/react... build && node ../../scripts/check-pack.mjs --package .",
+    "prepublishOnly": "node ../../scripts/check-pack.mjs --require-pnpm"
   },
   "dependencies": {
-    "@opensymbols/core": "workspace:*"
+    "@opensymbols/core": "workspace:^"
   },
   "peerDependencies": {
     "react": ">=19"
@@ -31,5 +44,8 @@
     "happy-dom": "^21.0.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

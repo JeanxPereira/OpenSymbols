@@ -404,14 +404,198 @@ wifi  GlyphWeight=9  viewBox 0 0 12.136713 9.020015
 `[BIN] CoreUI 26A5416b` The weight enum is
 `kCoreThemeVectorGlyphWeight{None, Ultralight, Thin, Light, Regular, Medium, Semibold,
 Bold, Heavy, Black}`, so 1 = Ultralight, 4 = Regular, 9 = Black. The other six weights
-are not stored; CoreUI interpolates them per point from the three masters
-(`CUIVectorGlyphMutator`), and refuses masters whose point counts differ ("CoreUI:
-Incompatible points when attempting to interpolate: Ultralight=%lu, Regular=%lu,
-Black=%lu"). Points, not commands: the masters' commands differ, their points do not
-([03](03-bvg-paths-and-numbers.md) §7).
+are not stored. CoreUI computes every weight, the three stored ones included, from the
+three masters (`CUIVectorGlyphMutator`), with one pair of scalars per (weight, glyph size).
 
-`[OBS]` What are the interpolation scalars for the six intermediate weights?
-(`+[CUIVectorGlyphMutator _interpolationData]`, not read.)
+**The scalar table.** `[BIN] CoreUI 26A5416b` `+[CUIVectorGlyphMutator _interpolationData]`
+(0x18b4cd900) is a `dispatch_once` accessor: the table is built once in its block
+(0x18b4cd938, size 0xb60) and cached in `_interpolationData.interpolationData`
+(0x1e6440cf0). It has two levels. The outer key is a continuous glyph size (six keys), the
+inner key a continuous weight (nine keys), and each value is a pair `(x, y)` of float64:
+`x` is the **Ultralight** scalar and `y` the **Black** scalar (at size 1.0, Ultralight is
+(1, 0), Black (0, 1) and Regular (0, 0)). `[INF]` The calls that build it
+(`+[NSNumber numberWithDouble:]`, `+[NSValue valueWithPoint:]`,
+`dictionaryWithObjects:forKeys:count:`) and the consumer's `-pointValue` are named from
+their argument shapes: they go through dyld-cache stubs outside the image, so no selector at
+a call site is read.
+
+`[BIN] CoreUI 26A5416b` The keys are float64 constants:
+
+| size key | symbol | address | value |
+|---|---|---|---:|
+| XXSmall | `_CUIVectorGlyphContinuousSizeXXSmall` | 0x18b58c610 | 0.2 |
+| XSmall | `_CUIVectorGlyphContinuousSizeXSmall` | 0x18b58c618 | 0.5 |
+| Small | `_CUIVectorGlyphContinuousSizeSmall` | 0x18b58c620 | 1.0 |
+| Medium | `_CUIVectorGlyphContinuousSizeMedium` | 0x18b58c628 | 1.276 |
+| Large | `_CUIVectorGlyphContinuousSizeLarge` | 0x18b58c630 | 1.647 |
+| XLarge | `_CUIVectorGlyphContinuousSizeXLarge` | 0x18b58c638 | 2.0 |
+
+| weight | symbol | address | value |
+|---|---|---|---:|
+| 1 Ultralight | `_CUIVectorGlyphContinuousWeightUltralight` | 0x18b58c640 | −0.8 |
+| 2 Thin | `_CUIVectorGlyphContinuousWeightThin` | 0x18b58c648 | −0.6 |
+| 3 Light | `_CUIVectorGlyphContinuousWeightLight` | 0x18b58c650 | −0.4 |
+| 4 Regular | `_CUIVectorGlyphContinuousWeightRegular` | 0x18b58c658 | 0 |
+| 5 Medium | `_CUIVectorGlyphContinuousWeightMedium` | 0x18b58c660 | 0.23 |
+| 6 Semibold | `_CUIVectorGlyphContinuousWeightSemibold` | 0x18b58c668 | 0.3 |
+| 7 Bold | `_CUIVectorGlyphContinuousWeightBold` | 0x18b58c670 | 0.4 |
+| 8 Heavy | `_CUIVectorGlyphContinuousWeightHeavy` | 0x18b58c678 | 0.56 |
+| 9 Black | `_CUIVectorGlyphContinuousWeightBlack` | 0x18b58c680 | 0.62 |
+
+`[BIN]` The arrays: `_kCoreThemeContinuousGlyphInternalSizes` (0x18b58c688) is the six
+sizes, `_kCoreThemeContinuousGlyphSizes` (0x18b58c6d0) is {1.0, 1.276, 1.647},
+`_kCoreThemeDiscreteGlyphSizes` (0x18b58c6b8) is {1, 2, 3}, and
+`_kCoreThemeContinuousGlyphWeights` (0x18b58c730) is the nine weights in order. `[INF]` The
+weight keys are the NSFontWeight values.
+
+`[BIN] CoreUI 26A5416b` The values are float64 constants (`qword_18B5926F8` …
+`qword_18B592948`), except 0, 0.5 and 1.0, which the code builds from `MOVI`/`FMOV`
+immediates. The table holds no float32; CoreUI computes in CGFloat (double). The
+Ultralight scalar `x`:
+
+| weight | 0.2 | 0.5 | 1.0 | 1.276 | 1.647 | 2.0 |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 Ultralight | 0.0115 | 0.6338 | 1.0 | 1.0680143742402992 | 1.1353465978260868 | 1.1162 |
+| 2 Thin | 0 | 0.2328 | 0.7741935483870966 | 0.8679677704534828 | 0.9624792734922861 | 1.0524 |
+| 3 Light | 0 | −0.0528 | 0.3333333333333333 | 0.47740059163160353 | 0.624976402173913 | 0.7878 |
+| 4 Regular | 0 | −0.0715 | 0 | 0.18209370032725572 | 0.3697913043478261 | 0.5464 |
+| 5 Medium | 0 | −0.0715 | 0 | 0.14843750853532175 | 0.30034952162225337 | 0.4641 |
+| 6 Semibold | 0 | −0.0715 | 0 | 0.12263442816150573 | 0.24711082153264766 | 0.3875 |
+| 7 Bold | −0.006 | −0.0739 | 0 | 0.08860427868299477 | 0.1768974634434575 | 0.2925 |
+| 8 Heavy | 0 | −0.076 | 0 | 0.039241864054824986 | 0.07504951544595084 | 0.1862 |
+| 9 Black | −0.1324 | −0.1325 | 0 | −0.004885142961266188 | 0.01599637746091113 | `[OBS]` |
+
+The Black scalar `y`:
+
+| weight | 0.2 | 0.5 | 1.0 | 1.276 | 1.647 | 2.0 |
+|---|---:|---:|---:|---:|---:|---:|
+| 1 Ultralight | 0.0221 | 0 | 0 | 0 | 0 | −0.0495 |
+| 2 Thin | 0.0661 | 0 | 0 | 0 | 0 | −0.0104 |
+| 3 Light | 0.435 | 0.2287 | 0 | 0 | 0 | 0 |
+| 4 Regular | 0.6924 | 0.4969 | 0 | 0 | 0 | 0 |
+| 5 Medium | 0.8145 | 0.6859 | 0.18 | 0.1649529780564263 | 0.13072859799999997 | 0.1072 |
+| 6 Semibold | 0.9057 | 0.7909 | 0.318 | 0.2914169278996865 | 0.2309538564666666 | 0.2173 |
+| 7 Bold | 0.9609 | 0.8937 | 0.5 | 0.45820271682340646 | 0.36313499444444436 | 0.352 |
+| 8 Heavy | 1.1061 | 1.08 | 0.7639789473684211 | 0.7001337513061651 | 0.5548702715111109 | 0.5134 |
+| 9 Black | 1.132 | 1.1847 | 1.0 | 0.9164054336468129 | 0.7262699888888887 | `[OBS]` |
+
+Each value is the shortest decimal that reads back as the stored float64. `[OBS]` The
+Black weight's pair at size 2.0 is not read.
+
+`[BIN]` Only at size 1.0, the size the masters are drawn at (§5.4), is exactly one scalar
+non-zero per weight. At the other sizes both can be non-zero and either can leave [0, 1]:
+Regular at 1.276 is (0.18209370032725572, 0), which leans toward Ultralight, and Ultralight
+at 2.0 is (1.1162, −0.0495). `[INF]` 0.7741935483870966 is 24/31 less one ulp and
+0.7639789473684211 is 36289/47500, ratios that look measured from stroke widths; the other
+values look entered by hand.
+
+**Lookup.** `[BIN] CoreUI 26A5416b`
+`+[CUIVectorGlyphMutator scalarsForGlyphContinuousWeight:glyphContinuousSize:]`
+(0x18b4cf940) takes the size's row when the size is a key. Otherwise
+`__segmentForGlyphContinuousSize` (0x18b4a9c04) gives the neighbouring sizes `lo`, `hi`
+from `_kCoreThemeContinuousGlyphInternalSizes`; it computes the weight's pair at both and
+blends them linearly in size, `S_lo + (S_hi − S_lo)·(size − lo)/(hi − lo)`
+(0x18b4cfa78–0x18b4cfa8c). Within a row,
+`+[CUIVectorGlyphMutator _scalarsForGlyphContinuousWeight:inDictionary:shouldClamp:]`
+(0x18b4cf7a4) returns the pair of an exact key, which is how the nine named weights are
+served. Otherwise `__segmentForGlyphContinuousWeight` (0x18b4a9c18, that is
+`__segmentForValue` (0x18b4a9b70) over the nine weights) gives the bracketing keys `lo`,
+`hi`, and it returns `P_lo + (P_hi − P_lo)·(w − lo)/(hi − lo)`, computed as one of three
+equal FMADD forms by where `w` falls (0x18b4cf8b0–0x18b4cf910). When `|hi − lo| < 2^-52` it
+returns `P_lo`; a missing key ends in a `.cold` assertion. The pair is therefore bilinear in
+(weight, size) over the 9×6 grid.
+
+`[BIN]` The discrete entry, `+[CUIVectorGlyphMutator scalarsForGlyphWeight:glyphSize:]`
+(0x18b4cfab4), maps the weight enum through a jump table (`jpt_18B4CFB04`: 1…9 to
+Ultralight…Black, 0 and 4 to Regular) and the GlyphSize through
+`transformForGlyphSize:` (§5.4), then looks up as above. For an enum above 9 it skips the
+load and uses whatever `d9` holds. `[INF]` The size call's selector is named from its
+return value and its argument.
+
+**Fractional weights.** `[BIN]` A weight between two keys is accepted: it gets the linear
+blend of the two keys' pairs. The interpolation is in the scalars, not between neighbouring
+masters. `[INF]` A weight `w` on the 1..9 scale with `n ≤ w ≤ n + 1` maps to the key
+`k_n + (w − n)·(k_{n+1} − k_n)`, which gives the same pair as blending the pairs of `n` and
+`n + 1` by `w − n`. Weight 6.5 at size 1.0: key 0.35, pair (0, (0.318 + 0.5)/2) = (0, 0.409).
+
+**No clamping.** `[BIN]` `__segmentForValue` (0x18b4a9b70) clamps only when bit 0 of its
+`w2` argument is set, to `(t0, t0)` below the table and `(t_last, t_last)` above it;
+without that bit it returns the end segment, and the blend extrapolates linearly. At both
+call sites that argument is `x0`, the nil result of the failed dictionary lookup, so 0, and
+`shouldClamp:` (`x3`) is never read in 0x18b4cf7a4. `[INF]` As compiled, neither weight nor
+size is clamped: a weight below −0.8 or above 0.62 extrapolates from the end segment, though
+`scalarsForGlyphWeight:glyphSize:` passes `shouldClamp:YES` (`MOV W3,#1` at 0x18b4cfbb0) and
+the continuous entry `NO` (0x18b4cfa18, 0x18b4cfa54).
+
+**Applying the pair.** `[BIN] CoreUI 26A5416b` `-[CUIVectorGlyphMutator
+applyDeltasWithScalars:andTransform:]` (0x18b4ce4a4) calls
+`+createInterpolatedPointsFromPoints:ultralightDeltas:blackDeltas:withScalars:`
+(0x18b4ce560) on the Regular points and the two delta arrays, CGPoint doubles, which
+`+deltaArrayFrom:to:` (0x18b4cf5a0) builds (equal counts required, else `.cold.1`). Per
+coordinate:
+
+```
+p = R + x·(UL − R) + y·(B − R)
+```
+
+`[INF]` The Accelerate calls (`vDSP_vsmsmaD`, `vDSP_vaddD`, `vDSP_vsubD`) are named from
+their argument shapes; `[OBS]` the sign of the deltas (`to − from`) rests on `vDSP_vsubD`'s
+semantics and on the argument order of `deltaArrayFrom:to:`, which the decompiler hid.
+`[INF]` It agrees with (1, 0) being Ultralight.
+
+**What the pair applies to.** `[BIN] CoreUI 26A5416b` Each
+`-[CUINamedVectorGlyph(Interpolation) _interpolated…WithWeight:glyphSize:fromUltralight:regular:black:]`
+takes the pair for (weight, size) and mixes its quantity in the same form; the size scale
+`S` of §5.4 follows where the table says:
+
+| quantity | method | after the mix |
+|---|---|---|
+| path points | `_interpolatedPathWithWeight:…` (0x18b4c6a08) → `pathForScalars:andTransform:` (0x18b4cef78) | × S |
+| canvas size (w, h) | `_interpolatedCanvasSizeWithWeight:…` (0x18b4c6d04) | × S |
+| alignment-rect insets (4) | `_interpolatedAlignmentRectInsetsWithWeight:…` (0x18b4c6db4) | × S |
+| anchor (x, y) | `_interpolatedAnchorWithWeight:…` (0x18b4c6f38) | × S |
+| baseline offset | `_interpolatedBaselineOffsetWithWeight:…` (0x18b4c6c1c) | `S·b + K·(S − 1)·X` (§5.4) |
+| cap height | `_interpolatedCapHeightWithWeight:…` (0x18b4c6cb8) | not scaled |
+
+`[INF]` The pair comes from stub 0x1900245D0, named
+`scalarsForGlyphContinuousWeight:glyphContinuousSize:` from its arguments (`d0` weight,
+`d1` size) and its return (`d0`, `d1`). `[INF]` "Canvas size" is the viewBox size and
+"anchor" the rotation anchor, by name. `[OBS]` Which stored quantities feed the canvas and
+anchor methods (viewBox or canvas; rotation anchor or metric centre) is not traced.
+`[OBS]` Not read: `_interpolatedStrokeWidthWithWeight:…` (0x18b4c6eb8),
+`_createInterpolatedDrawAttachmentDataStoreWithWeight:…` (0x18b4c6ff4) and
+`clipStrokeKeyframesForPath:scalars:` (0x18b4ce85c). `[OBS]` Whether the master path objects
+the mutator receives already carry the document `transform`, and so whether that transform
+is interpolated. How a reader applies all this to the metrics and pivots: [06](06-drawing.md)
+§9.4.
+
+Worked example `[INF]`, `wifi` Semibold, from the viewBox widths above: at size 1.0 the pair
+is (0, 0.318) and the width `11.30517 + 0.318·(12.136713 − 11.30517)` = 11.569601; at size
+1.276 the pair is (0.12263442816150573, 0.2914169278996865), the mixed width 11.506238 and,
+× 1.276, 14.681960.
+
+**Incompatible points.** `[BIN] CoreUI 26A5416b` `-[CUIVectorGlyphMutator
+initWithPointSize:regular:ultralight:black:]` (0x18b4cd454) builds a point array per master
+with `+pointArrayFromPath:` (0x18b4cf094; block 0x18b4cf224) and compares the three counts.
+When they differ it logs "CoreUI: Incompatible points when attempting to interpolate:
+Ultralight=%lu, Regular=%lu, Black=%lu" (0x18b5a776b) and raises an `NSException`. The block
+walks the path element by element and appends:
+
+| element type | points |
+|---:|---:|
+| 0 | 1 |
+| 1 | 1 |
+| 2 | 2 |
+| 3 | 3 |
+| 4 and any other | 0 |
+
+`[INF]` These are `CGPathElementType` values (move, line, quad curve, cubic curve, close),
+so a point is every on-curve or control point of the master's path, and a close counts
+none. `[BIN]` Only the counts are compared, not the element types.
+`_interpolatedPathWithWeight:…` (0x18b4c6a08) catches
+`CUIVectorGlyphIncompatiblePointsException` (0x1e0923880), logs the glyph name and bundle
+id, raises again and returns nil. Points, not commands: the masters' commands differ, their
+points do not ([03](03-bvg-paths-and-numbers.md) §7).
 
 ### 5.3 Direction (4) and Appearance (7)
 
@@ -451,15 +635,97 @@ Each combination has its own three masters.
 `[CAR]` Every vector rendition has GlyphSize = 1 (Small) and Dimension2 = 0: the masters
 are drawn once, at Small. `[BIN] CoreUI 26A5416b` `kCoreThemeVectorGlyphSize{None,
 Small, Medium, Large}`; Medium and Large are derived from the Small masters by a
-transform (`+[CUIVectorGlyphMutator transformForGlyphSize:]`).
+transform (`+[CUIVectorGlyphMutator transformForGlyphSize:]`) and by the weight table's
+size rows (§5.2).
 
-`[OBS]` What is that transform? Not read.
+**The transform.** `[BIN] CoreUI 26A5416b` `+[CUIVectorGlyphMutator transformForGlyphSize:]`
+(0x18b4cf6e8) returns two doubles `(S, T)` in `d0`, `d1`, not a `CGAffineTransform`:
+
+| GlyphSize | S | T = K·(1 − S) |
+|---|---:|---:|
+| 0 None, 1 Small | 1.0 | 0 (`MOVI V1,#0`) |
+| 2 Medium | 1.276 (`…SizeMedium`) | −0.09723339843750001 |
+| 3 Large | 1.647 (`…SizeLarge`) | −0.22793481445312502 |
+| any other | 0 | 0 |
+
+`K` = `qword_18B592950` = **0.352294921875** (`3FD68C0000000000`), and `qword_18B592958` =
+−K; the code is `FMADD D1, D0, D2, D1`, so `T = S·(−K) + K`. `[INF]` The two T values are
+that expression evaluated in float64.
+
+`[BIN]` `+[CUIVectorGlyphMutator transformForGlyphContinuousSize:]` (0x18b4cf744) tail-calls
+`transformForGlyphSize:` with the matching enum when the size is exactly 1.0, 1.276 or
+1.647, and otherwise returns `(size, K·(1 − size))`: the same formula with `S = size`,
+continuous in size.
+
+**What it scales.** `[BIN] CoreUI 26A5416b`
+
+- **Path.** `_interpolatedPathWithWeight:…` passes `andTransform:(S, 0)` (`d3` zeroed by
+  `MOVI V3.2D,#0` at 0x18b4c6aa4). `applyDeltasWithScalars:andTransform:` (0x18b4ce4a4)
+  multiplies every coordinate by S, then adds `T·pointSize` to the y coordinates only; with
+  T = 0 the path is scaled by S **about the master's coordinate origin**, with no
+  translation. `[INF]` `pointSize` is the mutator's own.
+- **Canvas size, the four alignment-rect insets, the anchor:** × S after the weight mix
+  (§5.2).
+- **Baseline offset.** `_interpolatedBaselineOffsetWithWeight:…` (0x18b4c6c1c) returns
+
+  ```
+  b' = S·b − T·X = S·b + K·(S − 1)·X
+  ```
+
+  with `b` the weight-mixed baseline offset and `X` the value of stub 0x190024290 on the
+  named glyph, the same value passed to `initWithPointSize:` for the path.
+- **Cap height:** the weight mix only, **not scaled**.
+
+`[INF]` `X` is `referencePointSize`: `K = 1443/4096`, and 1443/2048 is the SF cap height
+measured in [06](06-drawing.md) §9.1 (`capHeight` 9.15967 at 13 pt = 1,443 path units), so
+`K·X` is half the cap height. `[OBS]` The stub's selector is not read; `X` could be
+`pointSize`.
+
+`[INF]` With `baselineOffset` measured **up from the viewBox bottom** ([06](06-drawing.md)
+§9.1), `S·b + K·(S − 1)·X` is the baseline that keeps the cap-height midline, `K·X` above
+the baseline, where it was relative to the baseline after the drawing is scaled by S about
+its origin: `b' + K·X = S·(b + K·X)`. Medium and Large are therefore a **uniform scale by
+1.276 or 1.647 about the cap-height centre**. The scale goes into the geometry, the canvas,
+the insets and the anchor, the centring into the baseline offset, and the cap height stays.
+
+Worked example `[INF]`, a master with `referencePointSize` 13: Large gives
+`b' = 1.647·b + 0.352294921875·0.647·13 = 1.647·b + 2.963152587890625`, Medium
+`b' = 1.276·b + 1.2640341796875`.
+
+**Size changes the weight.** `[BIN]` The size picks the scalar table's row (§5.2), so at
+Medium and Large a weight is drawn with other `(x, y)` than at Small: Regular at Medium is
+(0.18209370032725572, 0), the strokes thinned toward Ultralight against the 1.276× scale.
+`[INF]` A Medium or Large rendering is not the Small one × S; even Regular needs the
+Ultralight and Black masters.
+
+**GlyphSize None.** `[BIN]` `transformForGlyphSize:` maps 0 to S = 1.0, but the named
+glyph's `…weight:glyphSize:…` initialiser (`-[CUINamedVectorGlyph …]`, 0x18b4a0310) maps it
+to 1.276 through its table 0x18b58c7c8 = [1.276, 1.0, 1.276, 1.647] (index = enum; above 3,
+1.0); its weight table 0x18b58c778 = [0, −0.8, −0.6, −0.4, 0, 0.23, 0.3, 0.4, 0.56, 0.62]
+(above 9, −0.8). `[INF]` It tail-calls the continuous initialiser (stub 0x190022F30).
 
 `[BIN] CoreUI 26A5416b` Dimension2 is a point-size class:
 `___VectorGlyphDimension2ToPointSizeTableForMac` (`0x18b594f28`) is `[11.0, 13.0, 17.0]`
 and the embedded table (`0x18b594f40`) is `[15.0, 17.0, 20.0]`. The twelve measurement
 renditions per symbol are Dimension2 {0,1,2} × GlyphSize {2,3} × Scale {1,2}; Small has
 none, consistent with Small being the master's own size. `[CAR]`
+
+**Independent of Dimension2 and point size.** `[BIN] CoreUI 26A5416b`
+`transformForGlyphSize:` and `transformForGlyphContinuousSize:` read only the size constants
+and K: no point size, no Dimension2, no `___VectorGlyphDimension2ToPointSize*` table. Those
+tables are read by `_CUIPointSizeForDimensionForVectorGlyph` (0x18b528fac): idiom 0 the Mac
+table, idiom 4 a constant 17.0, any other idiom the embedded table, indexed by Dimension2.
+The only length in the transform's results is `X` in the baseline, which the shift is
+proportional to. `[OBS]` Who calls `_CUIPointSizeForDimensionForVectorGlyph`, and how it
+bears on drawing.
+
+`[OBS]` The final scale from master units to device points is not read. `[INF]` It is most
+likely `pointSize / referencePointSize`, given the masters' `transform` scale of
+`referencePointSize / 2048` ([06](06-drawing.md) §9.1); the rendered size is then that ratio
+× S. `[OBS]` The continuous catalog entry
+`-[CUICatalog namedVectorGlyphWithName:…glyphContinuousSize:…]` (0x18b539694) and the
+continuous `CUINamedVectorGlyph` initialiser (0x18b49ff94, 0x18b4a0048) are not read, nor
+any point-size scaling above CoreUI (a text-style multiplier, for instance).
 
 ### 5.5 Localization (13)
 

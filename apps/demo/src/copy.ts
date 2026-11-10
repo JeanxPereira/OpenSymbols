@@ -21,6 +21,7 @@ export function deepImportLine(pkg: string, component: string): string {
 const PROP_ORDER = [
   ["size", 24],
   ["weight", "regular"],
+  ["scale", "medium"],
   ["mode", "monochrome"],
   ["color", "currentColor"],
   ["palette", undefined],
@@ -28,6 +29,7 @@ const PROP_ORDER = [
   ["appearance", "light"],
   ["layout", "box"],
   ["direction", "auto"],
+  ["locale", undefined],
   ["title", undefined],
 ] as const satisfies ReadonlyArray<readonly [keyof IconProps, unknown]>;
 

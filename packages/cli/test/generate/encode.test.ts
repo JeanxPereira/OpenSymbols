@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import { Catalog, DecodeError } from "@opensymbols/decode";
-import { FORMAT_VERSION } from "@opensymbols/core";
 import { encodeSymbol, round3, round6 } from "../../src/generate/encode.js";
 import { buildPalette, STAND_IN_PALETTE } from "../../src/generate/stand-in-palette.js";
 import { EncodeError } from "../../src/errors.js";
@@ -175,7 +174,8 @@ const thrown = (f: () => unknown): Error => {
 describe("encodeSymbol", () => {
   it("encodes a 2-layer symbol to one variant with ops, layer ranges and three masters", () => {
     const s = encode("two");
-    expect(s.v).toBe(FORMAT_VERSION);
+    // The expanded form until the generator writes format 2 (P6).
+    expect(s.v).toBe(1);
     expect(s.name).toBe("two");
     expect(s.palette).toBe("apple");
     expect(Object.keys(s.variants)).toEqual(["a0d0"]);

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { checkTarballEntries, main } from './check-pack.mjs';
+import { execSync } from 'node:child_process';
+import { checkTarballEntries, cli, isPnpm, main, readTarball } from './check-pack.mjs';
 
 const entry = (path, content = '') => ({ path, content });
 
@@ -88,4 +89,38 @@ test('main exits 0 on a clean package', () => {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('--package checks one package directory', () => {
+  const root = fixture({ 'dist/index.js': 'export {};\n', 'symbols/x.js': 'export {};\n' });
+  try {
+    assert.equal(cli(['--package', join(root, 'pkg')], quiet), 1);
+    rmSync(join(root, 'pkg', 'symbols'), { recursive: true });
+    assert.equal(cli(['--package', join(root, 'pkg')], quiet), 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('readTarball reads the files of a packed tarball and --tarball checks them', () => {
+  const root = fixture({ 'dist/index.js': 'export {};\n', 'symbols/x.js': 'export {};\n' });
+  try {
+    const out = execSync(`npm pack --json --ignore-scripts --pack-destination "${root}"`, {
+      cwd: join(root, 'pkg'),
+      encoding: 'utf8',
+    });
+    const tgz = join(root, JSON.parse(out)[0].filename);
+    const paths = readTarball(tgz).map((e) => e.path).sort();
+    assert.deepEqual(paths, ['package/dist/index.js', 'package/package.json', 'package/symbols/x.js']);
+    assert.equal(cli(['--tarball', tgz], quiet), 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('isPnpm reads the user agent pnpm and npm set', () => {
+  assert.equal(isPnpm('pnpm/10.29.0 npm/? node/v24.11.1 win32 x64'), true);
+  assert.equal(isPnpm('npm/11.6.2 node/v24.11.1 win32 x64 workspaces/false'), false);
+  // No user agent at all. (undefined would read the environment, which is pnpm under pnpm test.)
+  assert.equal(isPnpm(''), false);
 });

@@ -7,6 +7,7 @@ import { assignNames } from "./names.js";
 import { CHUNK_SIZE, writePackage } from "./write.js";
 
 export { componentName } from "./names.js";
+export { toWire } from "./wire.js";
 
 /** One `index.json` symbol entry. */
 export interface IndexSymbol {
@@ -22,6 +23,18 @@ export interface IndexSymbol {
   /** Why a render is approximate whatever its options: "palette" (stand-in colours), "build". */
   approximate: string[];
   chunk: number;
+}
+
+/**
+ * One `index.json` "localized" entry: a localized facet (Docs/format/05 §4.3) and what it became in
+ * its base symbol's data: the locale tags it is stored under (`zh` may become `zh-Hans` and
+ * `zh-Hant`), `"rtl"` for the Direction 5 variants, or nothing when the base has its own drawing
+ * for each (token 13 wins over the facet) or was not generated.
+ */
+export interface IndexLocalized {
+  name: string;
+  base: string;
+  became: string[];
 }
 
 /** One `index.json` category. */
@@ -72,7 +85,7 @@ export interface AssembleInput {
   /** The app's labels by category key; they win over the bundle's. */
   categoryLabels?: ReadonlyMap<string, string> | undefined;
   skipped?: ReadonlyArray<{ name: string; reason: string }>;
-  localized?: ReadonlyArray<{ name: string; base: string }>;
+  localized?: readonly IndexLocalized[];
 }
 
 export interface Assembled {

@@ -73,7 +73,7 @@ importers:
   packages/animate:
     dependencies:
       '@opensymbols/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
     devDependencies:
       '@opensymbols/react':
@@ -98,10 +98,10 @@ importers:
   packages/cli:
     dependencies:
       '@opensymbols/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
       '@opensymbols/decode':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../decode
     devDependencies:
       '@opensymbols/react':
@@ -127,7 +127,7 @@ importers:
   packages/react:
     dependencies:
       '@opensymbols/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
     devDependencies:
       '@types/react':

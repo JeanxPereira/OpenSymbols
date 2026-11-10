@@ -246,6 +246,39 @@ describe("Catalog (Docs/format/01 section 5.3, 05 section 4)", () => {
     expect(byName(c, "a.rtl")?.localizedVariantOf).toBe("a");
   });
 
+  it("picks a token-13 rendition by localization and lists each symbol's localizations (05 section 4.3)", () => {
+    const c = Catalog.open({
+      car: buildCar({
+        keyFormat: KEY_FORMAT,
+        facets: { a: 1, b: 2 },
+        localizations: { ar: 59797, hi: 42419, "zh-Hans": 5 },
+        renditions: [
+          rend(1, 4, "a"),
+          rend(1, 4, "a-ar", { 13: 59797 }),
+          rend(1, 4, "a-hi-l", { 13: 42419, 4: 4 }),
+          rend(1, 4, "a-hi-r", { 13: 42419, 4: 5 }),
+          rend(2, 4, "b"),
+        ],
+      }),
+      bundleFiles,
+    });
+    expect(c.localizations()).toEqual(new Map([["ar", 59797], ["hi", 42419], ["zh-Hans", 5]]));
+    expect(label(c, "a", 4)).toBe("a");
+    expect(label(c, "a", 4, { localization: 59797 })).toBe("a-ar");
+    expect(label(c, "a", 4, { localization: 42419, direction: 5 })).toBe("a-hi-r");
+    expect(c.hasRendition("a", 4, { localization: 5 })).toBe(false);
+    expect(() => c.document("a", 4, { localization: 5 })).toThrow(/localization 5/);
+    // The same §4.4 axes rule as `variants`, per localization; the base (0) is not listed.
+    expect(c.localizationsOf("a")).toEqual(
+      new Map([
+        [59797, { appearance: [], direction: [] }],
+        [42419, { appearance: [], direction: [4, 5] }],
+      ]),
+    );
+    expect(c.localizationsOf("b")).toEqual(new Map());
+    expect(c.localizationsOf("nope")).toEqual(new Map());
+  });
+
   it("documents() enumerates every vector rendition, including ones no facet reaches", () => {
     const all = [...catalog().documents()];
     expect(all).toHaveLength(6 + 3 + 1 + 1 + 1 + 1);

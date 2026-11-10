@@ -9,6 +9,10 @@ export const SIZE_MAX = 256;
 export interface InspectorSettings {
   mode: RenderingMode;
   weight: Weight;
+  /** The symbol scale (SwiftUI's `imageScale`); default "medium". */
+  scale: Scale;
+  /** The requested locale; undefined: the base drawing. Kept across symbols, drawn where it resolves. */
+  locale?: string;
   size: number;
   /** Undefined: `currentColor`. */
   color?: string;
@@ -20,6 +24,9 @@ export interface InspectorSettings {
   /** Undefined: not applied. */
   variableValue?: number;
 }
+
+export type Scale = "small" | "medium" | "large";
+export const SCALES: readonly Scale[] = ["small", "medium", "large"];
 
 export const DEFAULT_PALETTE: [string, string, string] = ["#0a66d8", "#34a853", "#f29900"];
 
@@ -39,9 +46,13 @@ export interface ControlsProps {
   variableValue: boolean;
   /** The text colour the tint picker shows while the tint is `currentColor`. */
   textColor: string;
+  /** The symbol's stored locale tags; no Locale control when empty. */
+  locales: readonly string[];
+  /** The stored tag `settings.locale` resolves to for this symbol, if any. */
+  resolvedLocale: string | undefined;
 }
 
-export function Controls({ settings, onChange, modes, variableValue, textColor }: ControlsProps) {
+export function Controls({ settings, onChange, modes, variableValue, textColor, locales, resolvedLocale }: ControlsProps) {
   const id = useId();
   const w = weightValue(settings.weight);
   const named = typeof settings.weight === "string" ? settings.weight : Number.isInteger(w) ? WEIGHTS[w - 1] : undefined;
@@ -118,6 +129,43 @@ export function Controls({ settings, onChange, modes, variableValue, textColor }
           onChange={(e) => onChange({ weight: weightFromSlider(Number(e.target.value)) })}
         />
       </div>
+
+      <label className="field-label" htmlFor={`${id}-scale`}>
+        Scale
+      </label>
+      <select
+        id={`${id}-scale`}
+        data-control="scale"
+        value={settings.scale}
+        onChange={(e) => onChange({ scale: e.target.value as Scale })}
+      >
+        {SCALES.map((s) => (
+          <option key={s} value={s}>
+            {cap(s)}
+          </option>
+        ))}
+      </select>
+
+      {locales.length > 0 && (
+        <>
+          <label className="field-label" htmlFor={`${id}-locale`}>
+            Locale
+          </label>
+          <select
+            id={`${id}-locale`}
+            data-control="locale"
+            value={resolvedLocale ?? ""}
+            onChange={(e) => onChange({ locale: e.target.value === "" ? undefined : e.target.value })}
+          >
+            <option value="">Base</option>
+            {locales.map((tag) => (
+              <option key={tag} value={tag}>
+                {tag}
+              </option>
+            ))}
+          </select>
+        </>
+      )}
 
       <label className="field-label" htmlFor={`${id}-size`}>
         Size

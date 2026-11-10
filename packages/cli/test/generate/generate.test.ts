@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -6,7 +6,9 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import { decodeSymbol, type SymbolData } from "@opensymbols/core";
 import { openCatalogDir } from "../../src/catalog-dir.js";
+import { moduleJson } from "../../src/generate/module-source.js";
 import { generate } from "../../src/generate/index.js";
 import { run } from "../../src/run.js";
 import { buildBplist } from "../../../decode/test/helpers/build-plist.js";
@@ -37,6 +39,11 @@ const exec = (argv: string[]) => {
 };
 
 const json = (file: string) => JSON.parse(readFileSync(file, "utf8"));
+/** The format 2 data a generated module carries. */
+const wireOf = (out: string, component: string) =>
+  JSON.parse(moduleJson(readFileSync(join(out, "symbols", `${component}.js`), "utf8")) as string);
+/** The same, expanded. */
+const dataOf = (out: string, component: string): SymbolData => decodeSymbol(wireOf(out, component));
 
 const plain = (id: number) => allMasters(id, () => [{ d: P_MLZ }]);
 const knockout = (id: number) => allMasters(id, () => [{ d: P_MLZ }, { d: P_MZ, knockout: true }]);
@@ -72,7 +79,7 @@ describe("opensymbols generate", () => {
 
   it("writes index.json: symbols, the build fingerprint, the palette and the localized facets", () => {
     const index = json(join(OUT, "index.json"));
-    expect(index.formatVersion).toBe(1);
+    expect(index.formatVersion).toBe(2);
     expect(index.palette).toBe("stand-in");
     expect(index.build).toEqual({ coreuiVersion: 1010, renditionCount: 12, facetCount: 4, validated: false });
     expect(index.symbols.map((s: { name: string }) => s.name)).toEqual(["plain.circle", "speaker.knockout"]);
@@ -89,26 +96,23 @@ describe("opensymbols generate", () => {
       chunk: 0,
     });
     expect(index.skipped).toEqual([{ name: "bad.masters", reason: expect.stringContaining("master 9") }]);
-    expect(index.localized).toEqual([{ name: "plain.circle.rtl", base: "plain.circle" }]);
+    expect(index.localized).toEqual([{ name: "plain.circle.rtl", base: "plain.circle", became: ["rtl"] }]);
   });
 
   it("warns on stderr that the build is not validated", () => {
     expect(r.err).toMatch(/warning: .*not .*validated/i);
   });
 
-  it("writes a module and a declaration per symbol, and the index re-exports them and the aliases", () => {
-    expect(readdirSync(join(OUT, "symbols")).sort()).toEqual([
-      "PlainCircle.d.ts",
-      "PlainCircle.js",
-      "SpeakerKnockout.d.ts",
-      "SpeakerKnockout.js",
-    ]);
+  it("writes a format 2 module per symbol, one shared declaration, and the index re-exports them and the aliases", () => {
+    expect(readdirSync(join(OUT, "symbols")).sort()).toEqual(["PlainCircle.js", "SpeakerKnockout.js"]);
     const mod = readFileSync(join(OUT, "symbols", "PlainCircle.js"), "utf8");
     expect(mod).toMatch(
-      /^"use client";\nimport \{ createIcon \} from "@opensymbols\/react";\nexport default \/\*#__PURE__\*\/createIcon\(\{"v":1,/,
+      /^"use client";\nimport \{ createIcon \} from "@opensymbols\/react";\nexport default \/\*#__PURE__\*\/createIcon\(\{"v":2,/,
     );
+    expect(mod.endsWith("});\n")).toBe(true);
+    expect(wireOf(OUT, "PlainCircle").variants.a0d0).not.toHaveProperty("argCounts");
     expect(readFileSync(join(OUT, "index.js"), "utf8")).not.toContain("use client");
-    expect(readFileSync(join(OUT, "symbols", "PlainCircle.d.ts"), "utf8")).toBe(
+    expect(readFileSync(join(OUT, "symbol.d.ts"), "utf8")).toBe(
       'declare const C: import("@opensymbols/react").OpenSymbolIcon;\nexport default C;\n',
     );
     const lines = [
@@ -117,13 +121,25 @@ describe("opensymbols generate", () => {
       'export { default as OldPlain } from "./symbols/PlainCircle.js";',
     ];
     expect(readFileSync(join(OUT, "index.js"), "utf8")).toBe(lines.join("\n") + "\n");
-    expect(readFileSync(join(OUT, "index.d.ts"), "utf8")).toBe(lines.join("\n") + "\n");
+    expect(readFileSync(join(OUT, "index.d.ts"), "utf8")).toBe(
+      [
+        'type Icon = import("@opensymbols/react").OpenSymbolIcon;',
+        "export declare const PlainCircle: Icon;",
+        "export declare const SpeakerKnockout: Icon;",
+        "export declare const OldPlain: Icon;",
+      ].join("\n") + "\n",
+    );
   });
 
-  it("writes chunks of SymbolData in index order and an installable package.json", () => {
-    const chunk = json(join(OUT, "chunks", "0.json"));
-    expect(chunk.map((s: { name: string }) => s.name)).toEqual(["plain.circle", "speaker.knockout"]);
-    expect(readdirSync(join(OUT, "chunks"))).toEqual(["0.json"]);
+  it("writes the .rtl facet as the base symbol's Direction 5 variant, since the base has none", () => {
+    const data = dataOf(OUT, "PlainCircle");
+    expect(Object.keys(data.variants)).toEqual(["a0d0", "a0d5"]);
+    expect(data.defaultVariant).toBe("a0d0");
+    expect(data.locales).toBeUndefined();
+  });
+
+  it("writes no chunks, and an installable package.json", () => {
+    expect(existsSync(join(OUT, "chunks"))).toBe(false);
     expect(json(join(OUT, "package.json"))).toEqual({
       name: "opensymbols-local",
       version: "0.0.0",
@@ -135,8 +151,8 @@ describe("opensymbols generate", () => {
       exports: {
         ".": { types: "./index.d.ts", default: "./index.js" },
         "./index.json": "./index.json",
-        "./chunks/*": "./chunks/*",
-        "./*": { types: "./symbols/*.d.ts", default: "./symbols/*.js" },
+        "./symbols/*": { types: "./symbol.d.ts", default: "./symbols/*" },
+        "./*": { types: "./symbol.d.ts", default: "./symbols/*.js" },
       },
       peerDependencies: { "@opensymbols/react": "*", react: ">=19" },
     });
@@ -145,19 +161,19 @@ describe("opensymbols generate", () => {
   it("deep imports resolve through the exports map", () => {
     // Self-reference: inside the package, its own name resolves through its exports.
     const script = [
-      'for (const s of ["opensymbols-local", "opensymbols-local/PlainCircle", "opensymbols-local/index.json", "opensymbols-local/chunks/0.json"])',
+      'for (const s of ["opensymbols-local", "opensymbols-local/PlainCircle", "opensymbols-local/index.json", "opensymbols-local/symbols/PlainCircle.js"])',
       "  console.log(import.meta.resolve(s));",
     ].join("\n");
     const out = execFileSync(process.execPath, ["--input-type=module", "-e", script], { cwd: OUT, encoding: "utf8" });
-    const [root, deep, index, chunk] = out.trim().split(/\r?\n/);
+    const [root, deep, index, file] = out.trim().split(/\r?\n/);
     expect(root).toBe(pathToFileURL(join(OUT, "index.js")).href);
     expect(deep).toBe(pathToFileURL(join(OUT, "symbols", "PlainCircle.js")).href);
     expect(index).toBe(pathToFileURL(join(OUT, "index.json")).href);
-    expect(chunk).toBe(pathToFileURL(join(OUT, "chunks", "0.json")).href);
+    expect(file).toBe(pathToFileURL(join(OUT, "symbols", "PlainCircle.js")).href);
   });
 
   it("every symbol carries the build's validation, and an unvalidated build renders flagged", async () => {
-    for (const s of json(join(OUT, "chunks", "0.json"))) expect(s.build).toEqual({ validated: false });
+    for (const c of ["PlainCircle", "SpeakerKnockout"]) expect(wireOf(OUT, c).build).toEqual({ validated: false });
     const PlainCircle = (await import(pathToFileURL(join(OUT, "symbols", "PlainCircle.js")).href)).default;
     expect(renderToStaticMarkup(createElement(PlainCircle))).toContain('data-approximations="build"');
   });
@@ -247,7 +263,7 @@ describe("opensymbols generate: exit codes and the output directory", () => {
     expect(index.symbols[0].component).toBe("S000Fill");
     expect(index.symbols[99].chunk).toBe(0);
     expect(json(join(OUT, "package.json")).name).toBe("my-icons");
-    expect(Object.keys(json(join(OUT, "chunks", "0.json"))[0].variants.a0d0.masters)).toEqual(["4"]);
+    expect(Object.keys(wireOf(OUT, "S000Fill").variants.a0d0.masters)).toEqual(["4"]);
   });
 
   it("--masters regular: a non-regular weight is weight-unavailable", async () => {
@@ -319,16 +335,15 @@ describe("opensymbols generate: exit codes and the output directory", () => {
     expect(e.cause).toBeInstanceOf(TypeError);
   });
 
-  it("chunks hold 200 symbols each", () => {
+  it("index.json puts 200 symbols in each demo chunk", () => {
     const facets: Array<[string, typeof plain]> = [];
     for (let i = 0; i < 201; i++) facets.push([`c${i}`, plain]);
     const OUT = newOut();
     const r = exec(["generate", "--catalog", writeCatalog(join(tmp, "chunks"), { facets }), "--out", OUT, "--masters", "regular"]);
     expect(r.code).toBe(0);
-    expect(readdirSync(join(OUT, "chunks")).sort()).toEqual(["0.json", "1.json"]);
-    expect(json(join(OUT, "chunks", "0.json"))).toHaveLength(200);
-    expect(json(join(OUT, "chunks", "1.json"))).toHaveLength(1);
-    expect(json(join(OUT, "index.json")).symbols[200].chunk).toBe(1);
+    const chunks = json(join(OUT, "index.json")).symbols.map((s: { chunk: number }) => s.chunk);
+    expect(chunks.filter((c: number) => c === 0)).toHaveLength(200);
+    expect(chunks[200]).toBe(1);
   });
 
   it("needs --out (exit 2) and a catalog (exit 2)", () => {
@@ -352,7 +367,7 @@ describe("opensymbols generate: exit codes and the output directory", () => {
     writeFileSync(join(OUT, "symbols", "Stale.js"), "");
     writeFileSync(join(OUT, "package.json"), "{}");
     expect(exec(["generate", "--catalog", root, "--out", OUT, "--masters", "regular"]).code).toBe(0);
-    expect(readdirSync(join(OUT, "symbols")).sort()).toEqual(["Kept.d.ts", "Kept.js"]);
+    expect(readdirSync(join(OUT, "symbols")).sort()).toEqual(["Kept.js"]);
     expect(readdirSync(OUT)).not.toContain(".opensymbols-staging");
   });
 
@@ -384,16 +399,20 @@ describe("opensymbols generate: exit codes and the output directory", () => {
     expect(readdirSync(OUT)).toEqual(["notes.txt"]);
   });
 
-  it("replaces a previous output: stale symbol modules and chunks are removed", () => {
+  it("replaces a previous output: stale symbol modules, declarations and an earlier format's chunks are removed", () => {
     const OUT = newOut();
     const first = writeCatalog(join(tmp, "first"), { facets: [["gone", plain], ["kept", plain]] });
     expect(exec(["generate", "--catalog", first, "--out", OUT, "--masters", "regular"]).code).toBe(0);
     expect(existsSync(join(OUT, "symbols", "Gone.js"))).toBe(true);
+    // What a format 1 generation also wrote.
+    mkdirSync(join(OUT, "chunks"));
+    writeFileSync(join(OUT, "chunks", "0.json"), "[]");
+    writeFileSync(join(OUT, "symbols", "Gone.d.ts"), "");
     const second = writeCatalog(join(tmp, "second"), { facets: [["kept", plain]] });
     expect(exec(["generate", "--catalog", second, "--out", OUT, "--masters", "regular"]).code).toBe(0);
-    expect(readdirSync(join(OUT, "symbols")).sort()).toEqual(["Kept.d.ts", "Kept.js"]);
+    expect(readdirSync(join(OUT, "symbols")).sort()).toEqual(["Kept.js"]);
     expect(json(join(OUT, "index.json")).symbols.map((s: { name: string }) => s.name)).toEqual(["kept"]);
-    expect(readdirSync(OUT).sort()).toEqual(["chunks", "index.d.ts", "index.js", "index.json", "package.json", "symbols"]);
+    expect(readdirSync(OUT).sort()).toEqual(["index.d.ts", "index.js", "index.json", "package.json", "symbol.d.ts", "symbols"]);
   });
 
   it("a component-name collision is fatal before anything is written (exit 1)", () => {
@@ -422,4 +441,113 @@ describe("opensymbols generate: exit codes and the output directory", () => {
     expect(exec(["generate", "--catalog", root, "--out", OUT, "--masters", "regular"]).code).toBe(0);
     expect(json(join(OUT, "index.json")).palette).toBe("apple");
   });
+});
+
+describe("opensymbols generate: localized drawings (Docs/format/05 section 4.3)", () => {
+  const LOC = { ar: 1, hi: 2, "zh-Hans": 3, "zh-Hant": 4 };
+  const at = (rs: ReturnType<typeof plain>, key: Record<number, number>) => rs.map((r) => ({ ...r, key: { ...r.key, ...key } }));
+  const root = writeCatalog(join(tmp, "localized"), {
+    facets: [
+      [
+        "globe",
+        (id) => [
+          // Left to right and right to left of its own, and a token-13 Arabic drawing.
+          ...at(allMasters(id, () => [{ d: P_MLZ }]), { 4: 4 }),
+          ...at(allMasters(id, () => [{ d: P_MLZ }]), { 4: 5 }),
+          ...at(allMasters(id, () => [{ d: P_MZ }]), { 13: LOC.ar }),
+        ],
+      ],
+      ["globe.ar", (id) => allMasters(id, () => [{ d: P_MLLZ }])],
+      ["globe.hi", (id) => allMasters(id, () => [{ d: P_MLLZ }])],
+      ["globe.zh", (id) => allMasters(id, () => [{ d: P_MZ }])],
+      ["globe.rtl", plain],
+      // Its Hindi drawing is not point-compatible: the symbol is skipped, like any variant.
+      ["flag", (id) => [...plain(id), ...at(incompatible(id), { 13: LOC.hi })]],
+    ],
+    localizations: LOC,
+  });
+  const OUT = newOut();
+  const r = exec(["generate", "--catalog", root, "--out", OUT]);
+  const index = json(join(OUT, "index.json"));
+
+  it("writes each localized drawing into the base symbol's locales, token 13 before the facet", () => {
+    const data = dataOf(OUT, "Globe");
+    expect(Object.keys(data.locales ?? {})).toEqual(["ar", "hi", "zh-Hans", "zh-Hant"]);
+    expect(data.locales!.ar!.a0d0!.ops).toBe("MZ"); // the token-13 rendition, not globe.ar
+    expect(data.locales!.hi!.a0d0!.ops).toBe("MLLZ"); // the facet
+    expect(data.locales!["zh-Hans"]).toEqual(data.locales!["zh-Hant"]);
+    expect(Object.keys(data.locales!["zh-Hans"]!.a0d0!.masters)).toEqual(["1", "4", "9"]);
+    // Its own Direction 5: the .rtl facet adds nothing.
+    expect(Object.keys(data.variants)).toEqual(["a0d4", "a0d5"]);
+  });
+
+  it("lists every localized facet with what it became, and generates none of them standalone", () => {
+    expect(index.symbols.map((s: { name: string }) => s.name)).toEqual(["globe"]);
+    expect(index.localized).toEqual([
+      { name: "globe.ar", base: "globe", became: [] },
+      { name: "globe.hi", base: "globe", became: ["hi"] },
+      { name: "globe.zh", base: "globe", became: ["zh-Hans", "zh-Hant"] },
+      { name: "globe.rtl", base: "globe", became: [] },
+    ]);
+    expect(readdirSync(join(OUT, "symbols"))).toEqual(["Globe.js"]);
+    expect(r.err).toContain("localized: 4 localized drawings across 1 symbol; 2 of 4 localized facets");
+  });
+
+  it("skips a symbol whose localized drawing is not point-compatible, naming the locale", () => {
+    expect(r.code).toBe(1);
+    expect(index.skipped).toEqual([{ name: "flag", reason: expect.stringContaining("a0d0 (hi): master 9") }]);
+    expect(r.err).toContain("    flag: variant a0d0 (hi): layer 0 step 2");
+  });
+});
+
+describe("opensymbols generate: the shared declaration type-checks through the exports map", () => {
+  const OUT = newOut();
+  const root = writeCatalog(join(tmp, "types"), {
+    facets: [["plain.circle", plain]],
+    aliases: { "old.plain": "plain.circle" },
+  });
+  const tsc = resolve(import.meta.dirname, "..", "..", "..", "..", "node_modules", "typescript", "bin", "tsc");
+  const consumer = [
+    'import type { OpenSymbolIcon } from "@opensymbols/react";',
+    'import { PlainCircle, OldPlain } from "opensymbols-local";',
+    'import Deep from "opensymbols-local/PlainCircle";',
+    'import File from "opensymbols-local/symbols/PlainCircle.js";',
+    "export const all: OpenSymbolIcon[] = [PlainCircle, OldPlain, Deep, File];",
+    // Typed, not `any`: each of these is an error, which @ts-expect-error requires.
+    "// @ts-expect-error",
+    "export const n1: number = PlainCircle;",
+    "// @ts-expect-error",
+    "export const n2: number = Deep;",
+    "// @ts-expect-error",
+    "export const n3: number = File;",
+    "",
+  ].join("\n");
+
+  for (const [module, resolution] of [
+    ["esnext", "bundler"],
+    ["nodenext", "nodenext"],
+  ] as const) {
+    it(`moduleResolution ${resolution}`, { timeout: 60_000 }, () => {
+      if (!existsSync(join(OUT, "index.json"))) {
+        expect(exec(["generate", "--catalog", root, "--out", OUT, "--masters", "regular"]).code).toBe(0);
+      }
+      // A consumer beside the package (so @opensymbols/react and react's types resolve as they
+      // would in an app), with the package linked into its node_modules.
+      const dir = `${OUT}-consumer-${resolution}`;
+      outs.push(dir);
+      mkdirSync(join(dir, "node_modules"), { recursive: true });
+      symlinkSync(OUT, join(dir, "node_modules", "opensymbols-local"), "junction");
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ type: "module" }));
+      writeFileSync(join(dir, "index.ts"), consumer);
+      const compilerOptions = { strict: true, noEmit: true, module, moduleResolution: resolution, target: "es2022", types: [] };
+      writeFileSync(join(dir, "tsconfig.json"), JSON.stringify({ compilerOptions, files: ["index.ts"] }));
+      let output = "";
+      try {
+        execFileSync(process.execPath, [tsc, "-p", join(dir, "tsconfig.json")], { encoding: "utf8", stdio: "pipe" });
+      } catch (e) {
+        output = String((e as { stdout?: string }).stdout || e);
+      }
+      expect(output).toBe("");
+    });
+  }
 });

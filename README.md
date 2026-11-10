@@ -49,9 +49,8 @@ keeps only the regular weight (smaller output; every `weight` then renders as re
 instead of the default `all`, which keeps ultralight, regular and black and interpolates
 between them.
 
-`--out` must be a new or empty directory, or the output of a previous `generate`, whose
-`symbols/`, `chunks/` and index files are then replaced. Any other non-empty directory is
-refused. The output:
+`--out` must be a new or empty directory, or the output of a previous `generate`, which is
+then replaced. Any other non-empty directory is refused. The output:
 
 ```
 my-icons/
@@ -59,10 +58,17 @@ my-icons/
   index.js, index.d.ts one named export per symbol, plus the legacy alias names
   index.json           the build fingerprint, the palette, every symbol's name, component,
                        aliases, categories, search terms, year, render modes and chunk; the
-                       skipped symbols with their reasons; the localized facets (not generated)
-  symbols/<Component>.js, .d.ts   one module per symbol
-  chunks/<n>.json      the same symbol data, 200 symbols per file, for tools that load it raw
+                       skipped symbols with their reasons; the localized and right-to-left
+                       facets, each with the base symbol and the locale or direction it became
+  symbol.d.ts          the one type declaration every symbol module shares
+  symbols/<Component>.js  one module per symbol, its data in format 2
 ```
+
+Each symbol module carries its data in a compact form (format 2: path values delta-encoded,
+default values left out, `viewBox` rounded to 6 significant digits), which the runtime
+expands once, on first use. Localized drawings live in their base symbol:
+`0.circle.ar` is `Sf0Circle` with `locale="ar"`, not a component of its own, and a `.rtl`
+facet becomes its base symbol's right-to-left drawing.
 
 The report on stderr lists the symbols that could not be encoded, grouped by reason. A
 skipped symbol does not stop the run; if more than 1% of the symbols are skipped the package
@@ -81,8 +87,8 @@ tarballs with the generated package:
 
 # in your app
 npm install --install-links \
-  /path/to/OpenSymbols/out/opensymbols-core-0.0.0.tgz \
-  /path/to/OpenSymbols/out/opensymbols-react-0.0.0.tgz \
+  /path/to/OpenSymbols/out/opensymbols-core-0.1.0.tgz \
+  /path/to/OpenSymbols/out/opensymbols-react-0.1.0.tgz \
   file:../my-icons react react-dom
 ```
 
@@ -96,9 +102,12 @@ Import each icon from its own module (a deep import, through the package's `expo
 ```tsx
 import Wifi from "opensymbols-local/Wifi";
 import HeartFill from "opensymbols-local/HeartFill";
+import Sf0Circle from "opensymbols-local/Sf0Circle";
 
 <Wifi size={32} weight="semibold" mode="hierarchical" color="#0a84ff" />
 <HeartFill weight={7.5} mode="multicolor" layout="text" title="Favourite" />
+<Wifi scale="large" layout="text" />
+<Sf0Circle locale="ar-EG" />
 ```
 
 The barrel works too (`import { Wifi, HeartFill } from "opensymbols-local"`), and production
@@ -108,7 +117,7 @@ barrel import there loads every icon module. With Vite, keep the package out of 
 dependency pre-bundling, `optimizeDeps: { exclude: ["opensymbols-local"] }` in
 `vite.config`; with Next.js, list it in `experimental.optimizePackageImports` in
 `next.config`, which rewrites barrel imports into deep ones. The `exports` map also exposes
-`opensymbols-local/index.json` and `opensymbols-local/chunks/<n>.json`.
+`opensymbols-local/index.json`.
 
 Component names are the symbol names in PascalCase (`heart.fill` → `HeartFill`; a name that
 starts with a digit gets an `Sf` prefix). The props, all optional:
@@ -116,24 +125,27 @@ starts with a digit gets an `Sf` prefix). The props, all optional:
 | prop | default | |
 |---|---|---|
 | `size` | `24` | the edge of the square in px (`layout="box"`), or the font size the icon is set to (`layout="text"`) |
-| `weight` | `"regular"` | a weight name (`ultralight` … `black`) or a number from 1 (ultralight) to 9 (black) |
+| `weight` | `"regular"` | a weight name (`ultralight` … `black`) or a number from 1 (ultralight) to 9 (black); a fraction lies between its two neighbours |
+| `scale` | `"medium"` | `"small"`, `"medium"` or `"large"`, SwiftUI's `imageScale`: the weight is redrawn for the scale, and with `layout="text"` the icon grows (×1.276 at medium, ×1.647 at large, against small) about the middle of the cap height; with `layout="box"` it still fits its square |
 | `mode` | `"monochrome"` | `monochrome`, `hierarchical`, `multicolor` or `palette`; a mode the symbol does not have is drawn in monochrome |
 | `color` | `"currentColor"` | the tint |
 | `palette` | | the colours of `palette` mode, by layer role: primary, secondary, tertiary; the last one repeats, and with none the tint is used |
 | `variableValue` | | 0 to 1: the symbol's variable-colour layers light up as the value passes each layer's threshold |
 | `appearance` | `"light"` | `"light"` or `"dark"`: the symbol's dark variant when it has one, and the dark multicolor colours and hierarchy levels |
+| `locale` | | a BCP-47 tag (`"ar"`, `"zh-Hant"`): the symbol's drawing for that tag, else for its language (`"ar-EG"` → `"ar"`), else the first stored tag of that language (`"zh"` → `"zh-Hans"`), else the base drawing |
 | `direction` | `"auto"` | `"ltr"`, `"rtl"` or `"auto"`: the right-to-left variant when the symbol has one; `auto` renders left-to-right, then follows the nearest `dir` attribute after mount |
 | `layout` | `"box"` | `"box"` fits the icon, centred, in a `size` square that no weight changes; `"text"` sizes it to text of font size `size` and sets it on the baseline |
 | `title` | | an accessible name; without it the icon is `aria-hidden` |
 
 Other SVG props (`className`, `style`, `aria-*`, handlers) go to the `<svg>`.
 
-When a render is not exact, the `<svg>` carries `data-approximate="true"` and
-`data-approximations`, a space-separated list of reasons:
+Every weight, named or fractional, at every scale, is computed with CoreUI's own scalar
+table (`Docs/format/01-bom-and-car.md` §5.2), as Apple computes it. When a render is not
+exact, the `<svg>` carries `data-approximate="true"` and `data-approximations`, a
+space-separated list of reasons:
 
 | reason | the render is not exact because |
 |---|---|
-| `weight` | the weight lies between two stored masters and is interpolated with a provisional (linear) table |
 | `weight-unavailable` | the weight needs a master the package does not have (`--masters regular`): drawn at regular |
 | `mode` | the symbol does not offer the requested `mode`: drawn in monochrome |
 | `palette` | `multicolor` with stand-in colours (no `app/colors-26.csv`) |

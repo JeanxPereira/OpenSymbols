@@ -120,6 +120,6 @@ describe("createIcon", () => {
   });
 
   it("throws on an unknown format version", () => {
-    expect(() => createIcon({ ...plain, v: 2 } as unknown as SymbolData)).toThrow(TypeError);
+    expect(() => createIcon({ ...plain, v: 3 } as unknown as SymbolData)).toThrow(TypeError);
   });
 });

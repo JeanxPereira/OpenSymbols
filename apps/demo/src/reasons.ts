@@ -3,7 +3,6 @@
  * README's reason table (a test keeps them in step); backticks mark code.
  */
 export const REASONS = {
-  weight: "the weight lies between two stored masters and is interpolated with a provisional (linear) table",
   "weight-unavailable": "the weight needs a master the package does not have (`--masters regular`): drawn at regular",
   mode: "the symbol does not offer the requested `mode`: drawn in monochrome",
   palette: "`multicolor` with stand-in colours (no `app/colors-26.csv`)",

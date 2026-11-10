@@ -76,6 +76,10 @@ export interface EffectsInput {
   appearance: "light" | "dark";
   /** The resolved direction. */
   direction: "ltr" | "rtl";
+  /** The symbol scale drawn (default "medium"). */
+  scale?: "small" | "medium" | "large";
+  /** The `locale` prop, as passed. */
+  locale?: string | undefined;
   effect: EffectProps | undefined;
   trigger: unknown;
   /** Whether the `trigger` prop was passed at all (`undefined` is a value it can change from). */

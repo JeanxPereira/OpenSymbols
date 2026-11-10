@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { FORMAT_VERSION } from '../packages/core/dist/index.js';
+import { FORMAT_VERSION, decodeSymbol } from '../packages/core/dist/index.js';
 
 const root = resolve(import.meta.dirname, '..');
 const script = join(root, 'scripts', 'synthetic-package.mjs');
@@ -14,6 +14,14 @@ const base = mkdtempSync(join(root, 'packages', 'cli', '.generated-test-syntheti
 const run = (...args) =>
   execFileSync(process.execPath, [script, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 const read = (...p) => JSON.parse(readFileSync(join(...p), 'utf8'));
+/** The format 2 JSON of each symbol module, in index order. */
+const wires = (dir) =>
+  read(dir, 'index.json').symbols.map((s) => {
+    const text = readFileSync(join(dir, 'symbols', `${s.component}.js`), 'utf8');
+    return JSON.parse(/createIcon\((.*)\);\n$/s.exec(text)[1]);
+  });
+/** The same, expanded as every runtime reads it. */
+const all = (dir) => wires(dir).map(decodeSymbol);
 
 test.after(() => rmSync(base, { recursive: true, force: true }));
 
@@ -30,8 +38,9 @@ test('300 symbols across 2 chunks, flagged as stand-in and unvalidated', () => {
   assert.equal(index.palette, 'stand-in');
   assert.equal(index.build.validated, false);
   assert.deepEqual(index.build, { coreuiVersion: 1010, renditionCount: 900, facetCount: 300, validated: false });
-  assert.deepEqual(readdirSync(join(out, 'chunks')).sort(), ['0.json', '1.json']);
-  assert.equal(read(out, 'chunks', '1.json').length, 100);
+  assert.equal(existsSync(join(out, 'chunks')), false);
+  assert.ok(readdirSync(join(out, 'symbols')).every((f) => f.endsWith('.js')));
+  assert.equal(index.symbols.filter((s) => s.chunk === 1).length, 100);
   assert.equal(index.symbols[299].chunk, 1);
   for (const s of index.symbols) {
     assert.ok(s.approximate.includes('build') && s.approximate.includes('palette'));
@@ -47,7 +56,7 @@ test('12 categories with counts and search terms; the feature mix is present', (
   assert.ok(index.symbols.every((s) => s.categories.length > 0 && s.searchTerms.length > 0));
   assert.ok(index.symbols.some((s) => s.variableValue));
   assert.ok(index.symbols.some((s) => !s.variableValue));
-  const chunk = [...read(out, 'chunks', '0.json'), ...read(out, 'chunks', '1.json')];
+  const chunk = all(out);
   assert.ok(chunk.every((s) => s.palette === 'stand-in' && s.build.validated === false));
   assert.ok(chunk.some((s) => Object.keys(s.variants).some((k) => k.endsWith('d4'))));
   assert.ok(chunk.some((s) => Object.keys(s.variants).some((k) => k.startsWith('a1'))));
@@ -65,7 +74,7 @@ test('12 categories with counts and search terms; the feature mix is present', (
 });
 
 test('the format carries what effects need: anchors, motion groups, stroke keyframes', () => {
-  const chunk = [...read(out, 'chunks', '0.json'), ...read(out, 'chunks', '1.json')];
+  const chunk = all(out);
   const variants = chunk.flatMap((s) => Object.values(s.variants));
   const anchored = chunk.filter((s) => Object.values(s.variants).every((v) => v.masters[4].rotationAnchor));
   assert.ok(anchored.length > 60 && anchored.length < 120, `~30% anchored, got ${anchored.length}`);
@@ -101,6 +110,19 @@ test('the format carries what effects need: anchors, motion groups, stroke keyfr
   assert.ok(keyframed > 100, `stroke keyframes on the bars and rings, got ${keyframed}`);
 });
 
+test('format 2 modules, and every 25th symbol carries localized drawings', () => {
+  const ws = wires(out);
+  assert.ok(ws.every((w) => w.v === 2));
+  assert.ok(ws.every((w) => Object.values(w.variants).every((v) => !('argCounts' in v))));
+  const localized = all(out).filter((s) => s.locales !== undefined);
+  assert.equal(localized.length, 12); // 300 / 25
+  for (const s of localized) {
+    assert.deepEqual(Object.keys(s.locales), ['ar', 'hi']);
+    const base = Object.values(s.variants)[0].masters[4].args;
+    assert.notDeepEqual(s.locales.ar.a0d0.masters[4].args, base);
+  }
+});
+
 test('the modules render through react-dom/server', async () => {
   const require = createRequire(join(root, 'packages', 'cli', 'package.json'));
   const { createElement } = require('react');
@@ -119,7 +141,7 @@ test('the same seed gives the same package; another seed another', () => {
   run('--out', join(base, 'b'), '--count', '40', '--seed', '7');
   run('--out', join(base, 'c'), '--count', '40', '--seed', '7');
   run('--out', join(base, 'd'), '--count', '40', '--seed', '8');
-  const text = (d) => readFileSync(join(base, d, 'chunks', '0.json'), 'utf8');
+  const text = (d) => JSON.stringify(wires(join(base, d)));
   assert.equal(text('b'), text('c'));
   assert.notEqual(text('b'), text('d'));
   const index = (d) => readFileSync(join(base, d, 'index.json'), 'utf8');

@@ -3,6 +3,9 @@ import {
   buildSvg,
   formatSignificant,
   pickVariant,
+  resolveLocale,
+  SCALE_SIZE,
+  BASELINE_K,
   serializePath,
   type LayerData,
   type RenderOptions,
@@ -57,6 +60,8 @@ const ro = (o: Partial<RenderOptions> = {}): RenderOptions => ({
   layout: "box",
   direction: "ltr",
   idPrefix: "p",
+  // Small: the masters' own size, so the geometry below is the stored one.
+  scale: "small",
   ...o,
 });
 
@@ -251,19 +256,26 @@ describe("knockout", () => {
 });
 
 describe("approximations", () => {
-  it("lists weight first, then paint reasons, from the chosen variant", () => {
+  it("lists weight-unavailable first, then paint reasons, from the chosen variant", () => {
     const v = variant({ variableValueMode: "draw", masters: { 4: master([0, 0, 10, 5]), 9: master([0, 0, 10, 5]) } });
-    const r = buildSvg(symbol({ a0d0: v }), ro({ weight: "bold", variableValue: 0.5 }));
-    expect(r.approximations).toEqual(["weight", "variable-draw"]);
+    const r = buildSvg(symbol({ a0d0: v }), ro({ weight: "light", variableValue: 0.5 }));
+    expect(r.approximations).toEqual(["weight-unavailable", "variable-draw"]);
     expect(r.approximate).toBe(true);
   });
-  it("a weight with no stored master is weight-unavailable, an in-between weight is weight", () => {
+  it("a weight with no stored master is weight-unavailable; an in-between weight is exact (the table)", () => {
     const only = symbol({ a0d0: variant() });
     expect(buildSvg(only, ro({ weight: "black" })).approximations).toEqual(["weight-unavailable"]);
     expect(buildSvg(only, ro({ weight: 6 })).approximations).toEqual(["weight-unavailable"]);
     const both = symbol({ a0d0: variant({ masters: { 4: master([0, 0, 10, 5]), 9: master([0, 0, 10, 5]) } }) });
-    expect(buildSvg(both, ro({ weight: 6 })).approximations).toEqual(["weight"]);
+    expect(buildSvg(both, ro({ weight: 6 })).approximations).toEqual([]);
+    expect(buildSvg(both, ro({ weight: 6.5, scale: "large" })).approximations).toEqual([]);
     expect(buildSvg(both, ro({ weight: "black" })).approximations).toEqual([]);
+  });
+  it("regular in a regular-only package is not flagged at any scale, including the default", () => {
+    const only = symbol({ a0d0: variant() });
+    const { scale: _s, ...noScale } = ro();
+    expect(buildSvg(only, noScale).approximations).toEqual([]);
+    for (const scale of ["small", "medium", "large"] as const) expect(buildSvg(only, ro({ scale })).approximations).toEqual([]);
   });
   it("a mode the symbol does not have renders monochrome, flagged", () => {
     const fixed = { paint: { kind: "fixed" as const, hex: "#ff0000" }, opacity: 1, clearBehind: false };
@@ -292,9 +304,11 @@ describe("pickVariant", () => {
     expect(pickVariant(symbol({ a0d0: a }), "dark", "ltr")).toBe(a);
     expect(pickVariant(symbol({ a0d0: a, a1d0: b }), "light", "ltr")).toBe(a);
   });
-  it("rtl picks direction 5 only when 4 and 5 both exist", () => {
+  it("rtl picks direction 5 whenever it is stored, else the default", () => {
     expect(pickVariant(symbol({ a0d4: a, a0d5: b }, "a0d4"), "light", "rtl")).toBe(b);
-    expect(pickVariant(symbol({ a0d0: a, a0d5: b }), "light", "rtl")).toBe(a);
+    // A base drawn the same both ways plus its .rtl facet (Docs/format/05 §4.3): ltr d0, rtl d5.
+    expect(pickVariant(symbol({ a0d0: a, a0d5: b }), "light", "rtl")).toBe(b);
+    expect(pickVariant(symbol({ a0d0: a, a0d5: b }), "light", "ltr")).toBe(a);
     expect(pickVariant(symbol({ a0d0: a, a0d4: b }), "light", "rtl")).toBe(a);
   });
   it("ltr picks direction 4 when 4 and 5 both exist, ignoring malformed keys", () => {
@@ -307,5 +321,92 @@ describe("pickVariant", () => {
     const s = symbol({ a0d4: a, a0d5: b, a1d4: c, a1d5: d }, "a0d4");
     expect(pickVariant(s, "dark", "rtl")).toBe(d);
     expect(pickVariant(symbol({ a0d4: a, a0d5: b, a1d4: c }, "a0d4"), "dark", "rtl")).toBe(b);
+  });
+});
+
+describe("scale (Docs/format/01 section 5.4)", () => {
+  const only = symbol({ a0d0: variant() });
+  it("defaults to medium", () => {
+    const { scale: _s, ...noScale } = ro();
+    expect(buildSvg(only, noScale)).toEqual(buildSvg(only, ro({ scale: "medium" })));
+  });
+  it("box: the glyph is scaled by S about the origin and still fills the same box", () => {
+    const r = buildSvg(only, ro({ scale: "medium" })).root;
+    expect(r.attrs.viewBox).toBe("0 -3.19 12.76 12.76");
+    expect(r.attrs.width).toBe(24);
+    expect(r.attrs.height).toBe(24);
+    expect(find(r, "g").find((g) => g.attrs.transform)!.attrs.transform).toBe("matrix(1.276 0 0 1.276 0 0)");
+    const large = buildSvg(only, ro({ scale: "large" })).root;
+    expect(large.attrs.viewBox).toBe("0 -4.1175 16.47 16.47");
+    expect(large.attrs.width).toBe(24);
+  });
+  it("text: the viewBox scaled by S, the baseline at S·b + K·(S − 1)·X", () => {
+    // size 34 / referencePointSize 17 = 2; baselineOffset 3.
+    const small = buildSvg(only, ro({ layout: "text", size: 34, scale: "small" })).root;
+    expect(small.attrs.style).toBe("vertical-align: -6px");
+    for (const scale of ["medium", "large"] as const) {
+      const S = SCALE_SIZE[scale];
+      const r = buildSvg(only, ro({ layout: "text", size: 34, scale })).root;
+      expect(r.attrs.width).toBeCloseTo(20 * S, 3);
+      expect(r.attrs.height).toBeCloseTo(10 * S, 3);
+      expect(r.attrs.style).toBe(`vertical-align: ${formatSignificant(-(S * 3 + BASELINE_K * (S - 1) * 17) * 2)}px`);
+    }
+  });
+});
+
+describe("locales (Docs/format/05 section 4.3)", () => {
+  const base = variant({ ops: "Z" });
+  const ar = variant({ ops: "ZZ" });
+  const hans = variant({ ops: "ZZZ" });
+  const hant = variant({ ops: "ZZZZ" });
+  const hiL = variant({ ops: "MZ" });
+  const hiR = variant({ ops: "MMZ" });
+  const he = variant({ ops: "MMMZ" });
+  const s: SymbolData = {
+    ...symbol({ a0d0: base }),
+    locales: { ar: { a0d0: ar }, "zh-Hant": { a0d0: hant }, "zh-Hans": { a0d0: hans }, hi: { a0d4: hiL, a0d5: hiR }, he: { a1d3: he } },
+  };
+  it("resolves the exact tag, case-insensitively", () => {
+    expect(resolveLocale(s, "ar")).toBe("ar");
+    expect(resolveLocale(s, "AR")).toBe("ar");
+    expect(resolveLocale(s, "zh-hant")).toBe("zh-Hant");
+    expect(resolveLocale(s, "zh_Hant")).toBe("zh-Hant");
+    expect(pickVariant(s, "light", "ltr", "zh-Hant")).toBe(hant);
+  });
+  it("then a shorter prefix down to the language subtag", () => {
+    expect(resolveLocale(s, "ar-EG")).toBe("ar");
+    expect(resolveLocale(s, "zh-Hant-TW")).toBe("zh-Hant");
+    expect(pickVariant(s, "light", "ltr", "ar-EG")).toBe(ar);
+  });
+  it("then the first stored tag, sorted, with the requested language", () => {
+    expect(resolveLocale(s, "zh")).toBe("zh-Hans");
+    expect(resolveLocale(s, "zh-TW")).toBe("zh-Hans");
+    expect(pickVariant(s, "light", "ltr", "zh")).toBe(hans);
+  });
+  it("else the base drawing", () => {
+    expect(resolveLocale(s, "fr-FR")).toBeUndefined();
+    expect(resolveLocale(s, "")).toBeUndefined();
+    expect(resolveLocale(s, undefined)).toBeUndefined();
+    expect(pickVariant(s, "light", "ltr", "fr")).toBe(base);
+    expect(pickVariant(s, "light", "ltr")).toBe(base);
+    expect(pickVariant(symbol({ a0d0: base }), "light", "ltr", "ar")).toBe(base);
+  });
+  it("picks direction and appearance within the locale's set", () => {
+    expect(pickVariant(s, "light", "ltr", "hi")).toBe(hiL);
+    expect(pickVariant(s, "light", "rtl", "hi-IN")).toBe(hiR);
+    // The set lacks a1d0: its own a0d0.
+    expect(pickVariant(s, "dark", "rtl", "ar")).toBe(ar);
+  });
+  it("falls back to the base set when the locale's set has none of the keys", () => {
+    expect(pickVariant(s, "light", "ltr", "he")).toBe(base);
+  });
+  it("buildSvg draws the localized variant", () => {
+    const one = (args: number[]) =>
+      variant({ ops: "ML", argCounts: [2, 2], masters: { 4: { ...master([0, 0, 10, 5]), args } }, layers: [layer([0, 2])] });
+    const d = symbol({ a0d0: one([0, 0, 1, 1]) });
+    d.locales = { ar: { a0d0: one([0, 0, 3, 3]) } };
+    const path = (locale?: string) => find(buildSvg(d, ro(locale === undefined ? {} : { locale })).root, "path")[0]!.attrs.d;
+    expect(path()).toBe("M0 0L1 1");
+    expect(path("ar-SA")).toBe("M0 0L3 3");
   });
 });

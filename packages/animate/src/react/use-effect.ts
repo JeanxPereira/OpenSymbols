@@ -17,15 +17,18 @@ export interface DrawingKey {
   weight: Weight;
   appearance: "light" | "dark";
   direction: "ltr" | "rtl";
+  /** Default "medium", as `buildSvg`. */
+  scale?: "small" | "medium" | "large";
+  locale?: string | undefined;
 }
 
 /**
  * The engine's drawing of `data` at a weight: core's `pickVariant` + `interpolate`, as `buildSvg` draws it.
  * @internal Exported for the demo's timeline; not part of the public API.
  */
-export function drawingOf({ data, weight, appearance, direction }: DrawingKey): AnimDrawing {
-  const variant = pickVariant(data, appearance, direction);
-  return toAnimDrawing(variant, interpolate(variant, weight), data.name);
+export function drawingOf({ data, weight, appearance, direction, scale = "medium", locale }: DrawingKey): AnimDrawing {
+  const variant = pickVariant(data, appearance, direction, locale);
+  return toAnimDrawing(variant, interpolate(variant, weight, scale), data.name);
 }
 
 /**
@@ -96,8 +99,18 @@ export class Controller {
     const i = this.input;
     if (!i) return undefined;
     const c = this.drawing;
-    if (c && c.key.data === i.data && c.key.weight === i.weight && c.key.appearance === i.appearance && c.key.direction === i.direction) return c.d;
-    const key: DrawingKey = { data: i.data, weight: i.weight, appearance: i.appearance, direction: i.direction };
+    const scale = i.scale ?? "medium";
+    if (
+      c &&
+      c.key.data === i.data &&
+      c.key.weight === i.weight &&
+      c.key.appearance === i.appearance &&
+      c.key.direction === i.direction &&
+      c.key.scale === scale &&
+      c.key.locale === i.locale
+    )
+      return c.d;
+    const key: DrawingKey = { data: i.data, weight: i.weight, appearance: i.appearance, direction: i.direction, scale, locale: i.locale };
     const d = drawingOf(key);
     this.drawing = { key, d };
     return d;

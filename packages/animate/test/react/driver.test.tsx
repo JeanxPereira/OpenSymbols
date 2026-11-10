@@ -260,7 +260,7 @@ describe("prefers-reduced-motion", () => {
 describe("effectRef", () => {
   it("play() starts an effect, stop() ends a continuous one gracefully", async () => {
     const h = createRef<SymbolHandle>();
-    const m = await track(<Two effectRef={h} />);
+    const m = await track(<Two effectRef={h} scale="small" />);
     const svg = m.host.querySelector("svg")!;
     clock.set(0);
     h.current!.play({ kind: "wiggle", repeat: "continuous" });
@@ -288,7 +288,7 @@ describe("draw: the clipped outline", () => {
     const bars = symbol("bars", [{ group: 1, len: 95 }]);
     const Bars = createIcon(bars);
     const h = createRef<SymbolHandle>();
-    const m = await track(<Bars effectRef={h} />);
+    const m = await track(<Bars effectRef={h} scale="small" />);
     const path = m.host.querySelector('g[data-layer="0"] path')!;
     const whole = path.getAttribute("d");
     clock.set(0);
@@ -313,11 +313,11 @@ describe("draw: the clipped outline", () => {
     v.masters[9] = { ...m4, args: [0, 0, 190, 0, 190, 5, 0, 5] };
     const Bars = createIcon(bars);
     const h = createRef<SymbolHandle>();
-    const m = await track(<Bars effectRef={h} />);
+    const m = await track(<Bars effectRef={h} scale="small" />);
     clock.set(0);
     h.current!.play({ kind: "draw" });
     clock.frame(100);
-    await m.render(<Bars effectRef={h} weight="black" />);
+    await m.render(<Bars effectRef={h} weight="black" scale="small" />);
     const path = m.host.querySelector('g[data-layer="0"] path')!;
     clock.frame(5000);
     expect(liveRuns()).toBe(0);
@@ -407,12 +407,12 @@ describe("fix round 1", () => {
     v.masters[9] = { ...v.masters[4]!, args: [0, 0, 190, 0, 190, 5, 0, 5] };
     const Bars = createIcon(bars);
     const h = createRef<SymbolHandle>();
-    const m = await track(<Bars effectRef={h} />);
+    const m = await track(<Bars effectRef={h} scale="small" />);
     clock.set(0);
     h.current!.play({ kind: "draw" });
     clock.frame(100);
     clock.set(150);
-    await m.render(<Bars effectRef={h} weight="black" />);
+    await m.render(<Bars effectRef={h} weight="black" scale="small" />);
     const path = m.host.querySelector('g[data-layer="0"] path')!;
     const heavy = drawingFor({ ...bars, variants: { a0d0: { ...v, masters: { 4: v.masters[9]! } } } });
     const st = sample(heavy, spec("draw"), 0.15)[0]!;
@@ -450,9 +450,9 @@ describe("renderFrame: one frame at a chosen time (a timeline scrubber)", () => 
     const { renderFrame, drawingOf, toSpec } = await import("../../src/react/index.js");
     const bars = symbol("bars", [{ group: 1, len: 95 }, { group: 2 }]);
     const Bars = createIcon(bars);
-    const m = await track(<Bars />);
+    const m = await track(<Bars scale="small" />);
     const svg = m.host.querySelector("svg")!;
-    const d = drawingOf({ data: bars, weight: "regular", appearance: "light", direction: "ltr" });
+    const d = drawingOf({ data: bars, weight: "regular", appearance: "light", direction: "ltr", scale: "small" });
     expect(d).toEqual(drawingFor(bars));
     const s = toSpec({ kind: "draw" }, { mode: "monochrome", appearance: "light" }, "once");
     expect(s).toEqual(spec("draw"));
@@ -581,13 +581,13 @@ describe("final review fixes", () => {
       const Two2 = createIcon(two2);
       const e = { kind: "wiggle" } as const;
       clock.set(0);
-      const m = await track(<Two2 effect={e} active />);
+      const m = await track(<Two2 effect={e} active scale="small" />);
       const svg = m.host.querySelector("svg")!;
       clock.frame(200);
       expect(seen.at(-1)).toBe("monochrome");
       const raf = clock.raf.mock.calls.length;
       clock.set(250);
-      await m.render(<Two2 effect={e} active mode="hierarchical" />);
+      await m.render(<Two2 effect={e} active mode="hierarchical" scale="small" />);
       expect(seen.at(-1)).toBe("hierarchical");
       // the same run, on the same clock: the frame is the continuous sample at 0.3 s
       clock.frame(300);

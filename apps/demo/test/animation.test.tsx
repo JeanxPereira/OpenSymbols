@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { interpolate, pickVariant, type LayerData, type RenderMode, type SymbolData, type VariantData } from "@opensymbols/core";
 import { defaultSpec, duration, loopStart, sample, toAnimDrawing, type Spec } from "@opensymbols/animate";
+import { frameModel } from "../src/components/AnimationPanel.js";
 import { Inspector, type InspectorProps } from "../src/components/Inspector.js";
 import { ChunkCache } from "../src/data/chunks.js";
 import type { DemoIndex, DemoSymbol } from "../src/data/index-model.js";
@@ -275,6 +276,18 @@ describe("animation panel", () => {
     expect(jsx()).not.toContain('import "@opensymbols/animate/react";');
     await act(async () => choose(control("effect")!, "bounce"));
     expect(jsx()).toContain(['import { Two } from "fake-symbols";', 'import "@opensymbols/animate/react";'].join("\n"));
+  });
+
+  it("the timeline animates the drawing the preview shows: its scale and locale", () => {
+    const v = pickVariant(TWO, "light", "ltr");
+    const large = frameModel(TWO, { scale: "large" }, { kind: "bounce" }).drawing;
+    expect(large).toEqual(toAnimDrawing(v, interpolate(v, "regular", "large"), "two"));
+    expect(large).not.toEqual(frameModel(TWO, {}, { kind: "bounce" }).drawing);
+    const ar: VariantData = { ...v, masters: { 4: { ...v.masters[4]!, args: v.masters[4]!.args.map((n) => n / 2) } } };
+    const localized: SymbolData = { ...TWO, locales: { ar: { a0d0: ar } } };
+    expect(frameModel(localized, { locale: "ar" }, { kind: "bounce" }).drawing).toEqual(
+      toAnimDrawing(ar, interpolate(ar, "regular", "medium"), "two"),
+    );
   });
 
   it("continuous: the scrubber shows the loop timeline, one period past loopStart", async () => {

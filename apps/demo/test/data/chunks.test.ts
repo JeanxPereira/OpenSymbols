@@ -25,7 +25,7 @@ function manualFetch() {
         url,
         ok: () => {
           inFlight--;
-          resolve(new Response(JSON.stringify([{ id: `s${n}` }]), { status: 200 }));
+          resolve(new Response(JSON.stringify([{ v: 1, id: `s${n}` }]), { status: 200 }));
         },
         fail: (status = 500) => {
           inFlight--;
@@ -336,7 +336,7 @@ describe("ChunkCache", () => {
     const fetchFn = (async (url: string) => {
       const n = Number(/(\d+)\.json$/.exec(url)?.[1]);
       const names = n === 0 ? ["a", "b"] : ["c", "d"];
-      return new Response(JSON.stringify(names.map((id) => ({ id }))), { status: 200 });
+      return new Response(JSON.stringify(names.map((id) => ({ v: 1, id }))), { status: 200 });
     }) as unknown as typeof fetch;
     const cache = new ChunkCache("/pkg", { fetchFn });
     expect(symbolAt(cache, index, 3)).toBeUndefined();
@@ -345,5 +345,36 @@ describe("ChunkCache", () => {
     expect(ids([symbolAt(cache, index, 2) as SymbolData])).toEqual(["c"]);
     expect(symbolAt(cache, index, 0)).toBeUndefined();
     expect(symbolAt(cache, index, 9)).toBeUndefined();
+  });
+});
+
+describe("ChunkCache and format 2", () => {
+  it("expands format 2 symbols (what the demo server builds from the modules) into SymbolData", async () => {
+    const st = { paint: { kind: "tint" } };
+    const wire = {
+      v: 2,
+      name: "w",
+      palette: "stand-in",
+      variants: {
+        a0d0: {
+          ops: "MLZ",
+          masters: { 4: { args: [3, 5, -2, -3], viewBox: [0, 0, 3, 5], transform: [1, 0, 0, 1, 0, 0] } },
+          layers: [{ cmd: [0, 3], role: "primary", modes: { monochrome: st, hierarchical: st, multicolor: st, palette: st }, motionGroup: 0 }],
+          variableValueMode: "color",
+          vcContinuous: false,
+        },
+      },
+      defaultVariant: "a0d0",
+      modes: ["monochrome"],
+      build: { validated: false },
+    };
+    const fetchFn = (async () => new Response(JSON.stringify([wire]), { status: 200 })) as unknown as typeof fetch;
+    const cache = new ChunkCache("/pkg", { fetchFn });
+    const [data] = await cache.load(0, 0);
+    expect(data!.v).toBe(1);
+    const v = data!.variants.a0d0!;
+    expect(v.argCounts).toEqual([2, 2, 0]);
+    expect(v.masters[4]!.args).toEqual([3, 5, 1, 2]);
+    expect(v.layers[0]!.modes.monochrome).toEqual({ paint: { kind: "tint" }, opacity: 1, clearBehind: false });
   });
 });

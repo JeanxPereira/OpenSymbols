@@ -2,6 +2,7 @@ import { createReadStream, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { extname, isAbsolute, relative, resolve } from "node:path";
+import { ChunkBuilder, CHUNK_PATH } from "./chunks.js";
 
 export interface DemoServerOptions {
   packageDir: string;
@@ -64,7 +65,28 @@ function hostName(header: string): string {
 
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
-function serve(opts: DemoServerOptions, req: IncomingMessage, res: ServerResponse): void {
+/**
+ * `/pkg/chunks/<n>.json`, built from the package's modules (a format 2 package has no chunks on
+ * disk); true when it answered. A chunk the index does not have falls through to a 404.
+ */
+function serveChunk(chunks: ChunkBuilder, rel: string, req: IncomingMessage, res: ServerResponse): boolean {
+  const m = CHUNK_PATH.exec(rel);
+  if (m === null) return false;
+  const text = chunks.chunk(Number(m[1]));
+  if (text === undefined) return false;
+  const body = Buffer.from(text, "utf8");
+  res.writeHead(200, {
+    "content-type": TYPES[".json"]!,
+    "content-length": String(body.length),
+    "x-content-type-options": "nosniff",
+    // Rebuilt when the package is generated again.
+    "cache-control": "no-cache",
+  });
+  res.end(req.method === "HEAD" ? undefined : body);
+  return true;
+}
+
+function serve(opts: DemoServerOptions, chunks: ChunkBuilder, req: IncomingMessage, res: ServerResponse): void {
   if (isLoopbackBind(opts.host) && !LOCAL_HOSTS.has(hostName(req.headers.host ?? ""))) {
     send(res, 403, "forbidden host");
     return;
@@ -84,6 +106,8 @@ function serve(opts: DemoServerOptions, req: IncomingMessage, res: ServerRespons
   if (path === "/") path = "/index.html";
   const isPkg = path === "/pkg" || path.startsWith("/pkg/");
   const found = isPkg ? resolveInside(opts.packageDir, path.slice("/pkg".length)) : resolveInside(opts.appDir, path);
+  // A chunk file on disk (a format 1 package) is served as is; otherwise it is built.
+  if (found === undefined && isPkg && serveChunk(chunks, path.slice("/pkg".length), req, res)) return;
   if (found === undefined) {
     send(res, 404, "not found");
     return;
@@ -107,9 +131,10 @@ function serve(opts: DemoServerOptions, req: IncomingMessage, res: ServerRespons
 
 /** The request listener; it never throws: an unexpected error becomes a 500. */
 export function createDemoHandler(opts: DemoServerOptions) {
+  const chunks = new ChunkBuilder(opts.packageDir);
   return (req: IncomingMessage, res: ServerResponse): void => {
     try {
-      serve(opts, req, res);
+      serve(opts, chunks, req, res);
     } catch {
       try {
         if (res.headersSent) res.destroy();
