@@ -5,10 +5,10 @@
 
 ## 1. What this is
 
-OpenSymbols is to SF Symbols what `lucide-react` is to Lucide: tree-shakable React
-components, one per symbol, with props for everything the symbol supports. On top of
-what lucide offers, it supports what SF Symbols has and Lucide does not: the weight axis,
-the four rendering modes, variable values and the symbol effects. It ships with a demo
+OpenSymbols is a React icon catalog of SF Symbols: tree-shakable React components, one per
+symbol, with props for everything the symbol supports, including what SF Symbols has beyond
+a flat icon set: the weight axis, the four rendering modes, variable values and the symbol
+effects. It ships with a demo
 page that browses the library and previews every one of those knobs live, and stays
 light while doing it.
 
@@ -30,7 +30,7 @@ from one; the generator itself runs anywhere Node runs.
 
 1. A generator that runs on Windows, macOS and Linux: catalog directory in,
    ready-to-import React package out.
-2. React components with lucide's ergonomics (`import { Wifi } from "..."`, one module
+2. React components with the usual icon-library ergonomics (`import { Wifi } from "..."`, one module
    per symbol, `size`, `color`, `className`) plus SF Symbols' own axes.
 3. All four rendering modes: monochrome, hierarchical, palette, multicolor, including
    the knockout layers (`-sfsymbols-clear-behind`).
@@ -248,7 +248,7 @@ import { Wifi } from "my-symbols";
 grows with weight (`wifi` is 10.97, 11.31 and 12.14 wide at the three masters). Two
 layouts:
 
-- `layout="box"` (default, the lucide drop-in): the `<svg>` is `size`×`size`; the
+- `layout="box"` (default, the usual icon-library box): the `<svg>` is `size`×`size`; the
   symbol is scaled to fit by its regular-master box and centred, so changing weight
   never reflows the page and a grid of mixed symbols lines up.
 - `layout="text"`: SF semantics. `size` is the point size; height follows the symbol's
@@ -463,7 +463,7 @@ search and grid/list switch, grid, and an inspector on the right.
 - Name and scope `opensymbols` / `@opensymbols/*` (npm availability not checked).
 - Format docs written before the decoder (§6).
 - SwiftUI-shaped effect API (`effect` + `trigger` / `active` / `visible`).
-- `size` defaults to a lucide-style square box; SF point-size layout is `layout="text"`.
+- `size` defaults to a square box, as icon libraries do; SF point-size layout is `layout="text"`.
 - React only; private catalog and IPSW extraction out of v1.
 - `scale` defaults to `medium`, like SwiftUI's `imageScale`.
 - Component naming rule of §7.4.
@@ -473,7 +473,7 @@ search and grid/list switch, grid, and an inspector on the right.
 ## 15. Left to the builder
 
 - Exact compact encoding of points in the generated modules, as long as a typical icon
-  stays small next to a lucide icon at one master.
+  stays a few kilobytes at one master.
 - Chunk size and how symbols are grouped into chunks.
 - Visual design of the demo within §12.3.
 - How the shared rAF loop schedules instances.
